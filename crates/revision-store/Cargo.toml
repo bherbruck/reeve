@@ -7,3 +7,9 @@ license.workspace = true
 [dependencies]
 rusqlite = { workspace = true }
 thiserror = { workspace = true }
+# Version-pinned locally (not workspace) per build rules; used for the
+# "sha256:<hex>" digest grammar (docs/decisions/delivery.md D13).
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

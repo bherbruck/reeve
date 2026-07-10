@@ -6,6 +6,12 @@ license.workspace = true
 
 [dependencies]
 reeve-types = { path = "../reeve-types" }
+margo-package = { path = "../margo-package" }
 serde = { workspace = true }
 serde_yaml_ng = { workspace = true }
 thiserror = { workspace = true }
+# Deterministic deploymentId: UUIDv5(REEVE_UUID_NAMESPACE,
+# "<device_id>/<app-name>") — docs/decisions/tree-render.md D2. Pinned
+# here rather than in the workspace root to keep this crate's
+# dependency additions self-contained.
+uuid = { version = "1", features = ["v5"] }
