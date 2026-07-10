@@ -4,7 +4,7 @@
 Status:       Stable
 Scope:        All reeve extensions to the pinned Margo specification
 Margo pin:    spec/margo/ (submodule commit is authoritative)
-Extensions:   REV-001 .. REV-008 (index in 01-framework Section 3.5)
+Extensions:   REV-001 .. REV-009 (index in 01-framework Section 3.5)
 ```
 
 ## Abstract
