@@ -1,0 +1,116 @@
+# The reeve Specification
+
+```
+Status:       Stable
+Scope:        All reeve extensions to the pinned Margo specification
+Margo pin:    spec/margo/ (submodule commit is authoritative)
+Extensions:   REV-001 .. REV-008 (index in Section 3.5)
+```
+
+## Abstract
+
+reeve implements the Margo specification pinned at `spec/margo/` and
+extends it where Margo is silent (offline behavior, desired-state
+derivation, federation) or where reeve needs capabilities Margo does
+not define (remote terminal, health journal, staged rollouts). This
+document is the complete reeve extension specification. Section 3 is
+its load-bearing clause: every extension is additive, and vanilla
+Margo tooling that knows nothing of this document MUST interoperate
+unmodified with every Margo surface reeve serves or emits. reeve
+also REPLACES three Margo device-facing surfaces outright
+(onboarding, device-API auth, desired-state delivery); Section 3.8
+enumerates them — replacement is declared there, never implied
+elsewhere. Sections 4–12 define the extensions themselves,
+identified REV-001 through REV-009.
+
+## 1. Introduction
+
+The founding constraint, restated from CLAUDE.md's "Spec fidelity"
+rules: anything that crosses the wire or lives in a file another
+Margo tool might read is spec-exact; everything else is ours. This
+document turns that rule of thumb into normative requirements
+(Section 3) and then spends the rest of its length in the "ours"
+column: capabilities layered over Margo in ways vanilla tooling can
+ignore entirely.
+
+Recurring context, cited throughout as "Law N" (CLAUDE.md, The Five
+Laws): Law 3 — crash-only, startup IS recovery; Law 4 — state lives
+in engines with someone else's test suite (SQLite, including the
+content-addressed revision store); Law 5 — the agent assumes it is
+offline more than online, polling, outbound-only, NAT-native.
+
+State/delivery taxonomy (DECISIONS.md D13): the per-device State
+Manifest is the ONE mutable coordinating document; everything it
+points to is immutable (code: OCI images/packages; config: the
+render-bundle digest) or authenticated-on-demand (secrets: the
+resolve endpoint, Section 12). Settings, when decided, are expected
+to become a third versioned pointer (`settings_version`) with its
+own endpoint.
+
+## 2. Conventions and Terminology
+
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+"SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+"OPTIONAL" in this document are to be interpreted as described in
+BCP 14 [RFC2119] [RFC8174] when, and only when, they appear in all
+capitals, as shown here.
+
+- **Extension**: a capability defined by a REV-numbered section of
+  this document, beyond the pinned Margo specification.
+- **Vanilla Margo tooling**: any WFM, device client, or other
+  implementation that conforms to `spec/margo/` and knows nothing of
+  this document.
+- **Additive field**: a field added to a Margo-defined payload that
+  is OPTIONAL, syntactically ignorable by a receiver that does not
+  know it, and whose absence or removal does not change the meaning
+  of any Margo-defined field.
+- **Margo surface**: any endpoint, payload, or file format defined
+  in `spec/margo/` (the onboarding API, `DeviceCapabilitiesManifest`,
+  `DeploymentStatusManifest`, application description YAML, ...).
+- **reeve surface**: any endpoint or format defined only here. reeve
+  surfaces live under the URL prefix `/api/reeve/`, with one named
+  carve-out whose prefix is fixed by external convention: `/v2/`
+  (the OCI distribution routes — native read-only pull of reeve's
+  own artifacts, plus the OPTIONAL image proxy to zot; Section 10.2,
+  DECISIONS.md D7/D8). All are invisible to vanilla Margo tooling
+  and none shadows a Margo path.
+- **Revision store**: the content-addressed history of the overlay
+  tree — sha256 blobs + append-only revisions — in reeve-server's
+  SQLite (DECISIONS.md D13). Git does not exist in the runtime.
+- **State Manifest / render bundle**: the per-device desired-state
+  pointer document (manifestVersion, bundle digest, per-app
+  secrets_version) and the OCI artifact it references (the rendered
+  D2 layout), Section 10.2.
+- **Channel / sub-channel / nudge / presence**: see Section 4.
+- **Journal / backfill / original timestamp**: see Section 7.
+- **Tier / root / gateway (tier) / layer**: see Section 8.
+- **Snapshot / target / RPO / verify-restore**: see Section 9.
+- **Rollout / cohort / wave / gate**: see Section 11.
+- **Secret reference / secrets_version / resolve**: see Section 12.
+
+## 13. References
+
+- [RFC2119] Bradner, S., "Key words for use in RFCs to Indicate
+  Requirement Levels", BCP 14, RFC 2119.
+- [RFC8174] Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
+  2119 Key Words", BCP 14, RFC 8174.
+- [RFC6455] Fette, I. and A. Melnikov, "The WebSocket Protocol".
+- [RFC9110] Fielding, R., et al., "HTTP Semantics" — ETag /
+  conditional requests (§10.2).
+- [SSE] WHATWG HTML Living Standard, "Server-sent events".
+- OCI Distribution Specification — pull routes (§10.2, DECISIONS.md
+  D7/D13); OCI Image Layout — air-gap archives (§8.5).
+- `spec/margo/system-design/specification/margo-management-interface/`
+  — device-client-onboarding.md, device-capabilities.md,
+  deployment-status.md, workload-management-api-1.0.0.yaml (the
+  Margo surfaces guarded by Section 3; the Desired State API
+  modeled by §10.2).
+- SQLite documentation — `VACUUM INTO`, WAL mode, and the session
+  extension (changeset capture/apply, §9.3).
+- CLAUDE.md — The Five Laws; "Spec fidelity — where the line is";
+  "Remote terminal (guardrails)" (summary of Section 5); "ui/".
+- DECISIONS.md — D7/D8 (artifact serving, registry), D12
+  (labels/class/pins), D13 (revision store + OCI delivery; the git
+  removal rationale, incl. Margo WG decision tracker issue #22),
+  D14 (authoring API), D15 (secrets), D16 (in-binary changeset
+  streaming; the litestream removal rationale).

@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""One-time split of spec/reeve/SPEC.md and spec/reeve/DECISIONS.md
+into per-concern files. Kept for provenance: this documents exactly
+how the 2026-07 restructuring moved text. Slices are cut at top-level
+'## ' heading boundaries and written VERBATIM — no rewording happens
+here. Before writing, the script re-concatenates the slices in
+original order and asserts byte-identity with the source monolith
+(content-preservation proof). Cross-reference rewrites, file headers,
+index material, and stubs were applied as ordinary edits AFTER this
+ran (see the commit following the split commit).
+"""
+import hashlib
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SPEC = ROOT / "spec/reeve/SPEC.md"
+DEC = ROOT / "spec/reeve/DECISIONS.md"
+
+
+def slice_sections(text):
+    """Split into (key, chunk) at top-level '## ' boundaries.
+    The preamble (everything before the first '## ') gets key 'PRE'.
+    Chunks keep their trailing newlines verbatim."""
+    lines = text.splitlines(keepends=True)
+    chunks, key, buf = [], "PRE", []
+    for ln in lines:
+        if ln.startswith("## "):
+            chunks.append((key, "".join(buf)))
+            key, buf = ln[3:].strip(), [ln]
+        else:
+            buf.append(ln)
+    chunks.append((key, "".join(buf)))
+    return chunks
+
+
+def route(chunks, rules, default=None):
+    """Map each chunk to a target file via first-matching regex."""
+    out = {}
+    for key, body in chunks:
+        target = None
+        for pat, dest in rules:
+            if re.match(pat, key):
+                target = dest
+                break
+        if target is None:
+            if default is None:
+                sys.exit(f"unrouted section: {key!r}")
+            target = default
+        out.setdefault(target, []).append((key, body))
+    return out
+
+
+def emit(routed, order_map, outdir):
+    outdir.mkdir(parents=True, exist_ok=True)
+    for fname, sections in routed.items():
+        path = outdir / fname
+        path.write_text("".join(body for _, body in sections))
+        print(f"  wrote {path.relative_to(ROOT)}  "
+              f"({sum(body.count(chr(10)) for _, body in sections)} lines, "
+              f"sections: {', '.join(k[:40] for k, _ in sections)})")
+
+
+def prove(chunks, original, label):
+    reassembled = "".join(body for _, body in chunks)
+    ok = reassembled == original
+    print(f"  content-preservation ({label}): "
+          f"{'BYTE-IDENTICAL' if ok else 'MISMATCH — ABORT'}")
+    if not ok:
+        sys.exit(1)
+
+
+# ---- SPEC.md -> spec/reeve/NN-*.md -----------------------------------
+spec_text = SPEC.read_text()
+spec_chunks = slice_sections(spec_text)
+prove(spec_chunks, spec_text, "SPEC.md slices")
+
+SPEC_RULES = [
+    (r"PRE", "00-INDEX.md"),                      # title + status block
+    (r"Abstract", "00-INDEX.md"),
+    (r"1\. Introduction", "00-INDEX.md"),
+    (r"2\. Conventions", "00-INDEX.md"),
+    (r"3\. Extension Framework", "01-framework.md"),
+    (r"4\. Persistent Agent Channel", "02-channel.md"),
+    (r"5\. Remote Terminal", "03-terminal.md"),
+    (r"6\. Live Status Stream", "04-status-stream.md"),
+    (r"7\. Device Health", "05-health-journal.md"),
+    (r"8\. Federation", "06-federation.md"),
+    (r"9\. Durability", "07-durability.md"),
+    (r"10\. Packaging", "08-packaging.md"),
+    (r"11\. Staged Rollouts", "09-rollouts.md"),
+    (r"12\. Secrets", "10-secrets.md"),
+    (r"13\. References", "00-INDEX.md"),
+]
+print("spec/reeve/ split:")
+emit(route(spec_chunks, SPEC_RULES), SPEC_RULES, ROOT / "spec/reeve")
+
+# ---- DECISIONS.md -> docs/decisions/*.md -----------------------------
+dec_text = DEC.read_text()
+dec_chunks = slice_sections(dec_text)
+prove(dec_chunks, dec_text, "DECISIONS.md slices")
+
+DEC_RULES = [
+    (r"PRE", "00-INDEX.md"),                      # title + principles
+    (r"D1\.", "auth.md"),
+    (r"D2\.|D3\.|D11\.|D12\.", "tree-render.md"),
+    (r"D4\.|D5\.", "agent.md"),
+    (r"D6\.|D16\.", "storage.md"),
+    (r"D7\.|D8\.|D13\.", "delivery.md"),
+    (r"D9\.", "deploy.md"),
+    (r"D10\.", "ui.md"),
+    (r"D14\.", "authoring.md"),
+    (r"D15\.", "secrets.md"),
+    (r"Explicitly NOT decided", "00-INDEX.md"),
+]
+print("docs/decisions/ split:")
+emit(route(dec_chunks, DEC_RULES), DEC_RULES, ROOT / "docs/decisions")
+
+print("done. originals untouched; stub them in the manual pass.")
