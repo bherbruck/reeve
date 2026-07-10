@@ -30,10 +30,14 @@ Margo sandbox). If either is empty, run `git submodule update --init
 3. **Crash-only.** No shutdown ceremony anywhere. Startup IS recovery.
    `kill -9` mid-operation must leave resumable state. Writes are atomic
    (temp+rename) or transactional (SQLite). Idempotent startup, always.
-4. **State lives in engines with someone else's test suite.** Server
-   runtime state: SQLite (WAL). Desired state: bare git repos on disk.
-   Nothing load-bearing lives only in RAM. Config in files; settings in
-   the DB. Never commit values, only shape (.env rule).
+4. **State lives in engines with someone else's test suite.** ALL
+   server state — including desired-state history — is SQLite (WAL):
+   a content-addressed revision store (blobs + append-only revisions,
+   see spec/reeve/DECISIONS.md D13). Change-log durability is the
+   SQLite session extension (trunk, D16) — no VCS, no replication
+   sidecar in the runtime. Nothing load-bearing lives only in RAM.
+   Config in files; settings in the DB. Never commit values, only
+   shape (.env rule).
 5. **Offline-first agent.** reeve-agent assumes it is offline more than
    online. Every network call has a "couldn't reach — continue from last
    known state" path. Polling, outbound-only, NAT-native. This is the
@@ -46,7 +50,9 @@ Margo sandbox). If either is empty, run `git submodule update --init
   `reference/` are the test fixtures. Field names, structure, semantics:
   exact. If we extend, extensions are additive and clearly marked, never
   redefinitions of spec fields.
-- **PATTERN-FAITHFUL:** per-device desired-state repo, pull-based agent,
+- **PATTERN-FAITHFUL:** per-device desired state delivered Margo's way
+  (State-Manifest poll + content-addressed pull, conditional GET,
+  monotonic manifestVersion — DECISIONS.md D13), pull-based agent,
   workload/device management (WFM/DFM) split — keep Margo's shape, our
   implementation.
 - **OURS ENTIRELY:** everything the spec doesn't nail down or gets wrong
@@ -64,26 +70,62 @@ Margo sandbox). If either is empty, run `git submodule update --init
 - Operational contract baked in from line one: SIGTERM-clean, /healthz,
   structured logs to stdout, config via env/files, externalized state.
 
+## ui/ — full web UI (vite + react + ts)
+- TanStack Router (file-based routes in ui/src/routes/), TanStack
+  Query for ALL server state, TanStack Table for tabular views.
+  shadcn/ui + tailwind for components. No other state or routing
+  libraries without asking.
+- API types are GENERATED: axum routes annotated with utoipa ->
+  openapi.json -> ui/src/api/ (generated client + React Query hooks).
+  Never hand-write API types in TS. Regenerate after any route change.
+- reeve-server serves /api/* from axum, embedded ui/dist assets by path
+  (rust-embed), and falls back to index.html for all other GETs (SPA
+  deep links must not 404). Dev mode: vite proxies /api to a running
+  reeve-server.
+- Live updates: SSE endpoint -> Query cache invalidation; polling
+  fallback. SSE for one-way status; websockets ONLY where genuinely
+  bidirectional (see Remote terminal below).
+- File names always kebab-case (`app.tsx`, not `App.tsx`) — no
+  exceptions, including framework-default scaffold names.
+- CRUD: prefer DRY dedicated pages over modals. One shared form
+  component per resource, reused by `new` and `edit` routes; `detail`
+  is its own page. No create/edit/detail modals.
+
+## Remote terminal (guardrails)
+Full spec: `spec/reeve/SPEC.md` Section 5 (REV-002). Summary here is
+MUST-level:
+- Terminal disabled by default; enabled only via desired state (a
+  config commit with an author and a diff), never a runtime toggle.
+- Sessions are short-lived, explicitly initiated — no
+  standing/background sessions.
+- Every session is audited in reeve-server's DB.
+- The reeve-server bridge relays bytes only. It MUST NOT interpret
+  session content, log secrets in plaintext, or execute anything
+  server-side.
+
 ## Layout
 - crates/reeve-types    — Margo-shaped types (ApplicationDescription,
                           deployment profiles, status). serde only.
 - crates/margo-package  — parse/validate app packages (dir or OCI ref).
 - crates/desired-state  — THE crate: overlay tree -> rendered per-device
                           state. Pure functions. Zero I/O. Table-tested.
-- crates/repo-store     — bare repos on disk via gix. commit/read/render
-                          plumbing. No shelling out to git.
+- crates/revision-store — content-addressed blob + append-only revision
+                          tables (rusqlite). No VCS anywhere; gix is
+                          not in the workspace.
 - crates/device-api     — axum routes: enroll, status ingest.
 - crates/reeve-agent    — agent binary: fetch -> diff -> apply -> report.
-- crates/reeve          — server binary: ties it together + embedded UI.
-- ui/                   — embedded UI source. File names always
-                          kebab-case (`app.tsx`, not `App.tsx`) — no
-                          exceptions, including framework-default
-                          scaffold names.
+- crates/reeve-server   — server binary: ties it together + embedded UI.
+- ui/                   — full web UI (vite + react + ts). See "ui/" below.
 
 ## Build order
-reeve-types -> desired-state -> repo-store -> reeve-agent (compose
-provider) -> device-api -> reeve -> UI. Milestone 1: full loop against a
-local bare repo with `git daemon`, no server at all.
+reeve-types -> desired-state -> revision-store -> reeve-agent (compose
+provider) -> device-api -> reeve-server -> UI. Milestone 1 (PROPOSAL,
+confirm harness): full agent loop against a LOCAL DIRECTORY source —
+a hand-authored State Manifest JSON + render bundle as an OCI layout
+dir on disk; the agent's fetcher takes `dir://` as a first-class
+source (the same code path air-gap media apply uses later). No
+server, no network. Chaos check (kill -9 mid-converge) runs against
+this harness.
 
 ## Verification
 - `cargo test --workspace` and `just standalone` (every crate builds
