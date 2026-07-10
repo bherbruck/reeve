@@ -395,7 +395,9 @@ DECIDED: git is removed from the runtime architecture entirely.
   RFC 9110 strong validator, digest grammar "sha256:<hex>"),
   enforces manifestVersion strict monotonicity (reject + log
   security event on regression — Margo's anti-rollback check,
-  adopted), then pulls the referenced render artifact from /v2 by
+  adopted; manifestVersion is (epoch, counter) packed into one u64,
+  epoch bumped by restore fencing — SPEC §9.5/§10.2), then pulls
+  the referenced render artifact from /v2 by
   digest, verifies, unpacks to temp, atomic dir swap, converges (D5
   unchanged). Devices never speak git.
 - The manifest carries, per app, a `secrets_version` (hash of

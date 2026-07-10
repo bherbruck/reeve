@@ -623,7 +623,7 @@ are registered by adding a row here from the defining section.
 | `terminal-session` | §5.4 | `sessionId`, `deviceId`, `phase` (`requested`\|`opened`\|`closed`\|`denied`), `user` | session lifecycle transition |
 | `health-state` | §7.4 | `deviceId`, `state` (`healthy`\|`degraded`\|`unknown`), `kind` (`device`\|`link`) | health classification changes |
 | `verify-restore` | §9.4 | `outcome` (`ok`\|`failed`), `snapshotTs`, `detail` | a verify-restore run completes |
-| `durability-lag` (PROPOSAL) | §9.3 | `generation`, `lastSeq`, `lagSeconds` | changeset upload lag crosses/clears a threshold — ops dashboard signal |
+| `durability-lag` | §9.3 | `generation`, `lastSeq`, `lagSeconds` | changeset upload lag crosses/clears a threshold — ops dashboard signal |
 | `rollout` | §11.6 | `rolloutId`, `wave`, `phase` (`started`\|`gated`\|`paused`\|`completed`\|`failed`) | rollout/wave transition |
 | `secret-rotation` | §12 | `secretName`, `scope`, `version`, `state` (`propagating`\|`converged`) | a secret version changes / all affected devices report converged |
 
@@ -842,21 +842,21 @@ appends what the parent published, verbatim.
   append-only successor of the old fast-forward-or-error rule.)
 - Transport is authenticated with the gateway's tier credentials.
 
-**PROPOSAL (per-tier revision model — confirm before implementation
-relies on it):** each tier holds exactly ONE revision store
-containing TWO streams: (a) the *upstream stream*, a verbatim
-read-only copy of the parent's published revisions (hub-owned
-layers: fleet/class/region), and (b) the *local stream*, the
-gateway's own revisions for the layers it owns (its site + its
-locally-enrolled device layers). Render input = (latest synced
-upstream revision, latest local revision, device context); the
-render-bundle manifest.yaml records BOTH revision ids (D2). Nothing
-is ever written upward — status/journal is the only up-flow (§8.3).
-Ownership (§8.4) becomes structural: the API refuses writes to
-layer paths outside the tier's ownership set, and the upstream
-stream is not writable at all. Divergence is impossible by
-construction rather than detected after the fact; §8.2's error case
-remains only for storage corruption or a misbehaving parent.
+**Per-tier revision model (normative):** each tier holds exactly
+ONE revision store containing TWO streams: (a) the *upstream
+stream*, a verbatim read-only copy of the parent's published
+revisions (hub-owned layers: fleet/class/region), and (b) the
+*local stream*, the gateway's own revisions for the layers it owns
+(its site + its locally-enrolled device layers). Render input =
+(latest synced upstream revision, latest local revision, device
+context); the render-bundle manifest.yaml records BOTH revision ids
+(D2). Nothing is ever written upward — status/journal is the only
+up-flow (§8.3). Ownership (§8.4) is structural: the API MUST refuse
+writes to layer paths outside the tier's ownership set, and the
+upstream stream MUST NOT be writable at all. Divergence is
+impossible by construction rather than detected after the fact;
+§8.2's error case remains only for storage corruption or a
+misbehaving parent.
 
 ### 8.3 Status flow upstream
 
@@ -878,8 +878,8 @@ The MUST-level core of federation:
   device enrolls against.
 - A tier MUST NOT author a revision touching a layer it does not
   own — including the root: the root does not edit site layers
-  owned by gateways. (Under the §8.2 PROPOSAL this is enforced
-  structurally, not by convention.)
+  owned by gateways. Enforced structurally per §8.2's two-stream
+  model, not by convention.
 - Federation therefore only replicates, never merges. There is no
   conflict-resolution machinery in reeve, by design; every sync
   appends verbatim or errors (§8.2).
@@ -1063,7 +1063,7 @@ didn't govern).
   migrate → if migrated, snapshot → resume streaming (DECISIONS.md
   D6). A changeset sequence never spans a schema version.
 - The server MAY publish upload lag (age of the last uploaded
-  sequence) as a `durability-lag` event (§6.3 — marked PROPOSAL).
+  sequence) as a `durability-lag` event (§6.3).
 
 ### 9.4 verify-restore (MUST)
 
@@ -1075,9 +1075,11 @@ didn't govern).
   sequence order, open the result as SQLite (integrity check),
   assert the schema version is known to this binary, assert recency
   (last applied sequence age ≤ 2× the relevant interval, config),
-  and record the result (when, which generation, last sequence,
-  outcome, failure detail) in the live DB. One restore procedure
-  for everything — there is no second path to rot.
+  assert the restore-fencing epoch marker is present and readable
+  at the target (§9.5), and record the result (when, which
+  generation, last sequence, outcome, failure detail) in the live
+  DB. One restore procedure for everything — there is no second
+  path to rot.
 - The result MUST be surfaced in the API and UI as "last verified
   restore: <when>", and published as a `verify-restore` event
   (§6.3). An unverified or stale-verified target is an
@@ -1108,18 +1110,25 @@ didn't govern).
   re-backfill everything journaled since the restore point (§7.3) —
   agent-side store-and-forward is itself part of the durability
   story.
-- **CONFLICT FLAG + PROPOSAL (restore vs anti-rollback,
-  unresolved):** restore-from-snapshot can resurrect a
-  manifestVersion older than what devices have already seen inside
-  the RPO window, and §10.2's strict monotonicity then makes every
-  affected device reject the server's manifests as a rollback
-  attack. PROPOSAL: manifestVersion is the pair
-  `(epoch, counter)`, compared lexicographically; a tiny epoch
-  marker lives AT THE SNAPSHOT TARGET (not in the DB) and every
-  restore-from-snapshot increments it, so a restored server's
-  manifests always compare strictly greater. Devices treat an epoch
-  bump as legitimate; a counter regression within an epoch remains
-  a security event. Confirm before implementing either side.
+- **Restore fencing (normative):** restore-from-snapshot can
+  resurrect manifest state older than what devices have already
+  seen inside the RPO window; without fencing, §10.2's strict
+  monotonicity would make affected devices reject the restored
+  server as a rollback attacker. Therefore manifestVersion is the
+  pair `(epoch, counter)`, compared lexicographically (§10.2 defines
+  the wire encoding), and a tiny epoch marker lives AT THE SNAPSHOT
+  TARGET (not in the DB). The epoch is PER-TIER: each tier fences
+  against its own snapshot target.
+  - Restore ordering: increment the epoch marker at the target
+    FIRST, then serve. A crash between increment and serve
+    double-increments harmlessly; epoch REUSE is forbidden — a
+    restored server MUST NOT serve under an epoch it has not
+    freshly incremented.
+  - verify-restore (§9.4) MUST assert the epoch marker is present
+    and readable at the snapshot target.
+  - Devices treat an epoch bump as a loggable notable event; a
+    counter regression WITHIN an epoch remains a security event
+    (§10.2).
 
 Data-value analysis — what the DB holds, split by fate on loss:
 
@@ -1224,10 +1233,19 @@ from the runtime by DECISIONS.md D13.)
   manifest digest, an RFC 9110 strong validator with the digest
   grammar `sha256:<hex>`; `If-None-Match` match returns 304. This
   models Margo's Desired State API (§3.8 item 3 reassessment).
-- **Anti-rollback (adopted from Margo)**: the agent MUST enforce
-  strict `manifestVersion` monotonicity — a regression is rejected
-  and logged as a security event, and the agent continues from last
-  known state (Law 5). See §9.5's flagged restore interaction.
+- **Anti-rollback (adopted from Margo)**: `manifestVersion` is
+  logically the pair `(epoch, counter)` compared lexicographically,
+  encoded on the wire as ONE monotonically increasing unsigned
+  64-bit integer — epoch in the high 16 bits, counter in the low 48
+  — so plain integer comparison IS the pair comparison and the
+  value stays exactly Margo's modeled shape (`ManifestVersion`:
+  monotonic u64, `workload-management-api-1.0.0.yaml`). The agent
+  MUST enforce strict monotonicity: a non-increasing value is
+  rejected and logged as a SECURITY event, and the agent continues
+  from last known state (Law 5). An increase that bumps the epoch
+  bits is accepted and logged as a NOTABLE event (a restore
+  happened, §9.5 — the server's restore fencing guarantees a
+  restored server always compares strictly greater).
 - **Artifact pull**: the render bundle, vendored app packages, and
   agent binaries are OCI artifacts served natively, read-only
   (GET manifest / GET blob by digest, standard OCI distribution
