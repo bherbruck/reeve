@@ -1,5 +1,5 @@
 [submodule "spec"]
-	path = spec/margo-spec
+	path = spec/margo
 	url = https://github.com/margo/specification
 [submodule "reference"]
 	path = reference

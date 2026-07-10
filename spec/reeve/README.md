@@ -1,6 +1,6 @@
 # reeve-spec
 
-Our own spec, not Margo's. Divergences from `spec/margo-spec/`,
+Our own spec, not Margo's. Divergences from `spec/margo/`,
 extensions Margo doesn't cover, and decisions made where Margo is
 silent (overlay tree, offline behavior, storage, crash-only posture,
 providers) get written down here — not scattered in code comments.

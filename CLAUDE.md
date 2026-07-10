@@ -5,22 +5,22 @@ The server compiles a layered deployment tree into per-device git repos.
 reeve-agent pulls its repo, converges the box, reports status.
 
 ## Before anything else
-`spec/margo-spec/` and `reference/` are git submodules (Margo spec pin,
+`spec/margo/` and `reference/` are git submodules (Margo spec pin,
 Margo sandbox). If either is empty, run `git submodule update --init
---recursive` first — NEVER proceed against an empty spec/margo-spec/.
+--recursive` first — NEVER proceed against an empty spec/margo/.
 
 ## Spec layout
-- `spec/margo-spec/` — submodule, pinned Margo spec snapshot (PR2). Read
+- `spec/margo/` — submodule, pinned Margo spec snapshot (PR2). Read
   only. Never hand-edit; re-pin by bumping the submodule commit.
-- `spec/reeve-spec/` — ours. Divergences from Margo, extensions Margo
+- `spec/reeve/` — ours. Divergences from Margo, extensions Margo
   doesn't cover, decisions we made where the spec is silent. This is
   where "ours entirely" (below) gets written down.
 - `reference/` — submodule, Margo sandbox. Reference implementation,
-  not authoritative — spec/margo-spec/ wins on conflict.
+  not authoritative — spec/margo/ wins on conflict.
 
 ## The Five Laws
 1. **Spec-grounded.** Implement against the pinned Margo spec in
-   `spec/margo-spec/`. Never from memory of Margo. Where a type mirrors
+   `spec/margo/`. Never from memory of Margo. Where a type mirrors
    the spec, cite the spec file/section in a doc comment. See "Spec
    fidelity" below for exactly where spec-exactness is required vs.
    where our design wins.
@@ -42,7 +42,7 @@ Margo sandbox). If either is empty, run `git submodule update --init
 
 ## Spec fidelity — where the line is
 - **WIRE-EXACT:** `reeve-types` and `margo-package` MUST parse real
-  Margo artifacts unmodified — the YAML in `spec/margo-spec/` and
+  Margo artifacts unmodified — the YAML in `spec/margo/` and
   `reference/` are the test fixtures. Field names, structure, semantics:
   exact. If we extend, extensions are additive and clearly marked, never
   redefinitions of spec fields.
@@ -53,7 +53,7 @@ Margo sandbox). If either is empty, run `git submodule update --init
   for our topology — the overlay tree (spec is silent on how desired
   state is derived), offline behavior (spec defers it), storage choices,
   crash-only posture, the systemd-unit provider. Write these decisions
-  down in `spec/reeve-spec/`, not as scattered comments.
+  down in `spec/reeve/`, not as scattered comments.
 - **Rule of thumb:** if it crosses the wire or lives in a file another
   Margo tool might read, spec-exact. If it's how we get there, ours.
 
@@ -75,6 +75,10 @@ Margo sandbox). If either is empty, run `git submodule update --init
 - crates/device-api     — axum routes: enroll, status ingest.
 - crates/reeve-agent    — agent binary: fetch -> diff -> apply -> report.
 - crates/reeve          — server binary: ties it together + embedded UI.
+- ui/                   — embedded UI source. File names always
+                          kebab-case (`app.tsx`, not `App.tsx`) — no
+                          exceptions, including framework-default
+                          scaffold names.
 
 ## Build order
 reeve-types -> desired-state -> repo-store -> reeve-agent (compose
@@ -86,7 +90,7 @@ local bare repo with `git daemon`, no server at all.
   alone) must pass before anything is called Done.
 - desired-state: table tests (tree in, files out) ARE the spec for that
   crate. Write them before the implementation.
-- Wire types: round-trip tests against actual spec/margo-spec or
+- Wire types: round-trip tests against actual spec/margo or
   reference YAML files, not hand-written approximations of them.
 - Chaos check before calling anything Done: kill -9 the process
   mid-operation, restart, assert convergence. "It works" and "it's
