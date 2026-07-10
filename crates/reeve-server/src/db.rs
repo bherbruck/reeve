@@ -45,6 +45,16 @@ const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "enrollment",
         sql: include_str!("migrations/V2__enrollment.sql"),
     },
+    EmbeddedMigration {
+        version: 3,
+        name: "render",
+        sql: include_str!("migrations/V3__render.sql"),
+    },
+    EmbeddedMigration {
+        version: 4,
+        name: "status",
+        sql: include_str!("migrations/V4__status.sql"),
+    },
 ];
 
 /// Open the server DB with the D6 pragmas. Idempotent.

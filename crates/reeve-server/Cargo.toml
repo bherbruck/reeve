@@ -26,6 +26,12 @@ hex = "0.4"
 getrandom = "0.3"
 base64 = "0.22"
 tempfile = "3"
+# C4 render pipeline: pack render bundles as deterministic tar.gz
+# (application/vnd.reeve.render-bundle.v1+tar+gzip, spec/reeve/
+# 08-packaging.md §10.2). Pure-Rust backend (musl-friendly, CLAUDE.md
+# single-static-binary goal) — mirrors reeve-agent's pin.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+tar = "0.4"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

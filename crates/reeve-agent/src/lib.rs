@@ -18,6 +18,7 @@ pub mod bundle;
 pub mod config;
 pub mod converge;
 pub mod enroll;
+pub mod ext;
 pub mod poll;
 pub mod provider;
 pub mod report;

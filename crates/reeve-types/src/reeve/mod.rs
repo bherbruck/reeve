@@ -11,3 +11,4 @@ pub mod enroll;
 pub mod events;
 pub mod health;
 pub mod manifest;
+pub mod secrets;

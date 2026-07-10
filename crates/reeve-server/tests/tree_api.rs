@@ -25,6 +25,7 @@ fn config(data_dir: &FsPath, auth: AuthMode) -> Config {
         data_dir: data_dir.to_path_buf(),
         auth,
         session_ttl_secs: 3600,
+        registry_endpoint: "registry.example:5000".to_string(),
     }
 }
 

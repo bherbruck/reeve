@@ -11,6 +11,7 @@
 pub mod device_token;
 pub mod enroll;
 pub mod identity;
+pub mod status;
 
 pub use device_token::{
     DEVICE_TOKEN_PREFIX, DeviceTokenStore, TokenStoreError, device_auth, generate_device_token,
@@ -18,3 +19,4 @@ pub use device_token::{
 };
 pub use enroll::{ENROLL_PATH, EnrollError, EnrollRequest, EnrollResponse, EnrollmentService};
 pub use identity::{DeviceIdentity, Identity, Role};
+pub use status::{JOURNAL_ROUTE, MARGO_STATUS_ROUTE, StatusIngest, StatusIngestError};

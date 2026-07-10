@@ -13,6 +13,19 @@ use reeve_agent::{
 };
 use tracing::{error, info, warn};
 
+/// Compiled-in extension hooks (docs/build-charter.md CODE BOUNDARY):
+/// each field exists only when its `ext-*` feature is on; core code
+/// never reaches into this struct — extensions are invoked from the
+/// loop shell between core steps.
+#[derive(Default)]
+struct ExtHooks {
+    /// ext-secrets (REV-009): resolve-endpoint client. `None` for
+    /// `dir://` sources and unenrolled agents — apps with secret
+    /// references are then deferred/held by `sync_env`.
+    #[cfg(feature = "ext-secrets")]
+    secrets: Option<reeve_agent::ext::secrets::SecretResolver>,
+}
+
 /// Ensure the last-accepted manifest's bundle is pulled + swapped
 /// (B2). Infallible at the loop level: every failure is a logged
 /// continue-from-last-swapped-bundle (Law 5); journaling happens
@@ -42,8 +55,19 @@ async fn converge_and_report(
     store: &BundleStore,
     provider: &dyn Provider,
     sink: Option<&StatusSink>,
+    hooks: &ExtHooks,
 ) {
-    let desired = resolve_desired(db, store);
+    #[cfg_attr(not(feature = "ext-secrets"), allow(unused_mut))]
+    let mut desired = resolve_desired(db, store);
+    // ext-secrets (REV-009): resolve `${secret:<name>}` references
+    // and materialize per-service env files BEFORE converging, so
+    // `up -d` runs against current secrets; failures mutate `desired`
+    // (hold/defer) and never block convergence of already-resolved
+    // apps (spec/reeve/10-secrets.md §12.3, Law 5).
+    #[cfg(feature = "ext-secrets")]
+    reeve_agent::ext::secrets::sync_env(db, data_dir, hooks.secrets.as_ref(), &mut desired).await;
+    #[cfg(not(feature = "ext-secrets"))]
+    let _ = hooks;
     let reports = converge(db, data_dir, provider, &desired);
     if !reports.is_empty() {
         info!(acted_on = reports.len(), "converge pass acted");
@@ -140,10 +164,24 @@ async fn main() -> anyhow::Result<()> {
         info!("no status sink (dir:// source or not enrolled); status reports journal locally");
     }
 
+    // Extension hooks compiled in behind their ext-* features.
+    #[cfg_attr(not(feature = "ext-secrets"), allow(unused_mut))]
+    let mut hooks = ExtHooks::default();
+    #[cfg(feature = "ext-secrets")]
+    {
+        hooks.secrets = reeve_agent::ext::secrets::SecretResolver::from_config(
+            &config.server,
+            config.device_token.clone(),
+        );
+        if hooks.secrets.is_none() {
+            info!("no secrets resolver (dir:// source or not enrolled); apps with secret references defer");
+        }
+    }
+
     // First converge BEFORE the first poll: startup IS recovery
     // (Law 3 — any non-terminal phase re-runs) and must work from
     // last known state with the server unreachable (Law 5).
-    converge_and_report(&mut db, &config.data_dir, &store, &provider, sink.as_ref()).await;
+    converge_and_report(&mut db, &config.data_dir, &store, &provider, sink.as_ref(), &hooks).await;
 
     // Capability probe once per startup (spec/reeve/01-framework.md
     // §3.3: probe per enrollment and on version change; a restart
@@ -190,7 +228,8 @@ async fn main() -> anyhow::Result<()> {
                 warn!(received = received.0, "manifest rejected; holding last known state");
             }
         }
-        converge_and_report(&mut db, &config.data_dir, &store, &provider, sink.as_ref()).await;
+        converge_and_report(&mut db, &config.data_dir, &store, &provider, sink.as_ref(), &hooks)
+            .await;
         tokio::time::sleep(interval).await;
     }
 }

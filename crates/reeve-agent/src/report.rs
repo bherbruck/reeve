@@ -313,22 +313,24 @@ mod tests {
         sink.send_unsent(&db).await;
 
         assert!(db.unsent_statuses().unwrap().is_empty(), "all marked sent");
-        let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 2);
-        // Order by seq; path carries clientId + deploymentId.
-        assert_eq!(seen[0].0, "dev-1");
-        assert_eq!(seen[0].1, "11111111-2222-3333-4444-555555555555");
-        assert_eq!(seen[1].1, "dep-2");
-        // The additive reeve object rode along (§7.3).
-        let reeve = &seen[0].2["reeve"];
-        assert!(reeve["seq"].as_u64().unwrap() < seen[1].2["reeve"]["seq"].as_u64().unwrap());
-        assert!(reeve["observedAt"].as_str().unwrap().contains('T'));
-        // Margo fields unchanged around it.
-        assert_eq!(seen[0].2["kind"], "DeploymentStatusManifest");
+        {
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.len(), 2);
+            // Order by seq; path carries clientId + deploymentId.
+            assert_eq!(seen[0].0, "dev-1");
+            assert_eq!(seen[0].1, "11111111-2222-3333-4444-555555555555");
+            assert_eq!(seen[1].1, "dep-2");
+            // The additive reeve object rode along (§7.3).
+            let reeve = &seen[0].2["reeve"];
+            assert!(reeve["seq"].as_u64().unwrap() < seen[1].2["reeve"]["seq"].as_u64().unwrap());
+            assert!(reeve["observedAt"].as_str().unwrap().contains('T'));
+            // Margo fields unchanged around it.
+            assert_eq!(seen[0].2["kind"], "DeploymentStatusManifest");
+        } // guard dropped before the next await (clippy: await_holding_lock)
 
         // Idempotent: nothing left, second call sends nothing.
         sink.send_unsent(&db).await;
-        assert_eq!(seen.len(), 2);
+        assert_eq!(seen.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

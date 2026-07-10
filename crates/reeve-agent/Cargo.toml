@@ -4,6 +4,17 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Extension boundary (docs/build-charter.md CODE BOUNDARY): reeve
+# extensions are whole modules under src/ext/, one cargo feature per
+# extension, all default-ON. Core (poll, pull, converge, compose
+# provider, status) never depends on ext items — the
+# --no-default-features build is the compiler-enforced proof.
+default = ["ext-secrets"]
+# REV-009 secrets: resolve-endpoint fetch + per-service env
+# materialization (spec/reeve/10-secrets.md §12.3).
+ext-secrets = []
+
 [dependencies]
 reeve-types = { path = "../reeve-types" }
 serde = { workspace = true }

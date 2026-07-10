@@ -289,14 +289,25 @@ pub async fn put_layer(
         .message
         .unwrap_or_else(|| format!("apply layer {tree_path}"));
 
-    let mut store = state.revisions.lock().expect("revisions mutex poisoned");
-    match commit_subtree(&mut store, &prefix, files, &author, &message) {
-        Ok((revision, changed)) => Json(json!({
-            "revision": revision,
-            "changed": changed,
-            "stream": "local",
-        }))
-        .into_response(),
+    let committed = {
+        let mut store = state.revisions.lock().expect("revisions mutex poisoned");
+        commit_subtree(&mut store, &prefix, files, &author, &message)
+    };
+    match committed {
+        Ok((revision, changed)) => {
+            if changed {
+                // Render hook (C4): a new revision re-renders affected
+                // devices. Fire-and-log — the commit already succeeded;
+                // startup reconcile / per-poll ensure_current retry.
+                crate::render::render_all_logged(&state);
+            }
+            Json(json!({
+                "revision": revision,
+                "changed": changed,
+                "stream": "local",
+            }))
+            .into_response()
+        }
         Err(e) => internal(e),
     }
 }
@@ -358,15 +369,24 @@ pub async fn put_package(
         .message
         .unwrap_or_else(|| format!("vendor package {name}/{version}"));
 
-    let mut store = state.revisions.lock().expect("revisions mutex poisoned");
-    match commit_subtree(&mut store, &prefix, files, &author, &message) {
-        Ok((revision, changed)) => Json(json!({
-            "revision": revision,
-            "changed": changed,
-            "stream": "local",
-            "warnings": warnings,
-        }))
-        .into_response(),
+    let committed = {
+        let mut store = state.revisions.lock().expect("revisions mutex poisoned");
+        commit_subtree(&mut store, &prefix, files, &author, &message)
+    };
+    match committed {
+        Ok((revision, changed)) => {
+            if changed {
+                // Render hook (C4) — see put_layer.
+                crate::render::render_all_logged(&state);
+            }
+            Json(json!({
+                "revision": revision,
+                "changed": changed,
+                "stream": "local",
+                "warnings": warnings,
+            }))
+            .into_response()
+        }
         Err(e) => internal(e),
     }
 }

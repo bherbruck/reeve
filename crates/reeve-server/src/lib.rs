@@ -12,10 +12,14 @@
 pub mod auth;
 pub mod config;
 pub mod db;
+pub mod delivery;
 pub mod device_tokens;
 pub mod enroll;
+pub mod ingest;
 pub mod join_tokens;
 pub mod ownership;
+pub mod presence;
+pub mod render;
 pub mod router;
 pub mod state;
 pub mod tree;
@@ -53,7 +57,7 @@ pub fn bootstrap(cfg: Config) -> anyhow::Result<AppState> {
     let revisions = revision_store::RevisionStore::open(&db_path)
         .map_err(|e| anyhow::anyhow!("opening revision store: {e}"))?;
 
-    Ok(AppState {
+    let state = AppState {
         cfg: Arc::new(cfg),
         db: Arc::new(Mutex::new(conn)),
         revisions: Arc::new(Mutex::new(revisions)),
@@ -62,7 +66,15 @@ pub fn bootstrap(cfg: Config) -> anyhow::Result<AppState> {
         // stream is refused structurally regardless (federation §8.2).
         // C10 swaps in Ownership::Gateway when `upstream` is configured.
         ownership: Arc::new(ownership::Ownership::Root),
-    })
+    };
+
+    // Render-on-startup reconcile (Law 3: startup IS recovery): a
+    // revision committed but un-rendered at kill time gets rendered now;
+    // unreferenced bundle blobs are purged (render.rs).
+    render::reconcile(&state)
+        .map_err(|e| anyhow::anyhow!("startup render reconcile: {e}"))?;
+
+    Ok(state)
 }
 
 /// Run the server until killed. No shutdown ceremony (Law 3): SIGTERM and

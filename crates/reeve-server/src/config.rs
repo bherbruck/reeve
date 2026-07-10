@@ -9,6 +9,10 @@
 //! - REEVE_PROXY_ROLE_HEADER     proxy mode: optional header carrying the role
 //! - REEVE_PROXY_TRUSTED_CIDR    proxy mode: REQUIRED comma-separated CIDRs
 //! - REEVE_SESSION_TTL_SECS      password mode: sliding idle TTL, default 604800 (7d)
+//! - REEVE_REGISTRY              tier registry endpoint substituted for
+//!   ${REEVE_REGISTRY} at render time (docs/decisions/delivery.md D8;
+//!   declared render input, tree-render.md D3); default
+//!   localhost:<listen port>
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -48,6 +52,11 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub auth: AuthMode,
     pub session_ttl_secs: i64,
+    /// Tier registry endpoint (docs/decisions/delivery.md D8): the value
+    /// `${REEVE_REGISTRY}` resolves to at render time. A DECLARED render
+    /// input (tree-render.md D3) — it enters render via `RenderContext`,
+    /// never via environment reads in the render path.
+    pub registry_endpoint: String,
 }
 
 impl Config {
@@ -111,11 +120,15 @@ impl Config {
             other => bail!("REEVE_AUTH must be password|proxy|none, got {other:?}"),
         };
 
+        let registry_endpoint =
+            get("REEVE_REGISTRY").unwrap_or_else(|| format!("localhost:{}", listen.port()));
+
         Ok(Config {
             listen,
             data_dir,
             auth,
             session_ttl_secs,
+            registry_endpoint,
         })
     }
 }
