@@ -1,3 +1,7 @@
+# reeve spec — Extension Framework & Conformance (REV-000)
+
+Part of the reeve specification; start at [00-INDEX.md](00-INDEX.md).
+
 ## 3. Extension Framework & Conformance (REV-000)
 
 This section governs everything after it. If any later section ever
@@ -37,7 +41,7 @@ to error:
   enrollment, status ingest, or deployment because of the absence.
 - reeve-agent facing a server that offers no extensions (a vanilla
   Margo WFM) MUST fall back to pure Margo behavior. Convergence MUST
-  NOT depend on any extension (Law 5; Section 4.6).
+  NOT depend on any extension (Law 5; 02-channel Section 4.6).
 - A payload carrying unknown `reeve` sub-fields MUST NOT be rejected
   for that reason by either side.
 
@@ -138,19 +142,19 @@ vanilla tooling never sees.
 | Extension | Surface | Touch | Why additive |
 |-----------|---------|-------|--------------|
 | framework (§3.3) | `DeviceCapabilitiesManifest.properties` | optional `reeve` object (advertisement) | one unknown optional key; no Margo field altered |
-| REV-004 (§7.3) | `DeploymentStatusManifest` body | optional `reeve` object (`observedAt`, `seq`, `health`) | same envelope key; all Margo-required fields present, unchanged |
-| REV-003 (§6) | Margo status ingest | read-only producer of `deployment-status` events | reads only; endpoint unmodified |
-| REV-007 (§10.5) | `ApplicationDescription` format | consumer: example self-management package | a wire-exact artifact, not a format change |
-| render bundle (§3.8 item 3, DECISIONS.md D2) | `ApplicationDescription` + `ApplicationDeployment` formats | consumer: wire-exact files emitted per app dir | artifacts emitted verbatim, not format changes |
-| REV-008 (§11.3) | `DeploymentStatusManifest` state enum | read-only gate input | reads only |
-| REV-009 (§12, DECISIONS.md D15) | `ApplicationDeployment` parameter values | value convention: a secret-typed parameter's `value` is the reference string `${secret:<name>}`, substituted agent-side at apply | syntactically valid per the pinned schema (parameter values are plain strings — DesiredState-001.yaml); no field added, renamed, or retyped; vanilla tooling sees a well-formed manifest |
+| REV-004 (05-health-journal §7.3) | `DeploymentStatusManifest` body | optional `reeve` object (`observedAt`, `seq`, `health`) | same envelope key; all Margo-required fields present, unchanged |
+| REV-003 (04-status-stream §6) | Margo status ingest | read-only producer of `deployment-status` events | reads only; endpoint unmodified |
+| REV-007 (08-packaging §10.5) | `ApplicationDescription` format | consumer: example self-management package | a wire-exact artifact, not a format change |
+| render bundle (§3.8 item 3, docs/decisions/tree-render.md D2) | `ApplicationDescription` + `ApplicationDeployment` formats | consumer: wire-exact files emitted per app dir | artifacts emitted verbatim, not format changes |
+| REV-008 (09-rollouts §11.3) | `DeploymentStatusManifest` state enum | read-only gate input | reads only |
+| REV-009 (10-secrets §12, docs/decisions/secrets.md D15) | `ApplicationDeployment` parameter values | value convention: a secret-typed parameter's `value` is the reference string `${secret:<name>}`, substituted agent-side at apply | syntactically valid per the pinned schema (parameter values are plain strings — DesiredState-001.yaml); no field added, renamed, or retyped; vanilla tooling sees a well-formed manifest |
 
 Margo's device-gateway concepts (opaque/see-thru,
 `device-capabilities.md` "Gateways considerations") are untouched by
-all extensions and orthogonal to Section 8's management-plane tiers.
+all extensions and orthogonal to 06-federation Section 8's management-plane tiers.
 (reeve's v1 model does not yet implement hierarchical deviceIds or
 gateway-relayed placement — recorded as known-unmodeled in
-DECISIONS.md, not foreclosed.)
+docs/decisions/00-INDEX.md, not foreclosed.)
 
 ### 3.8 Margo surfaces replaced (not extended)
 
@@ -163,12 +167,12 @@ therefore cannot enroll against reeve-server:
    (`POST /api/v1/onboarding`, `GET /onboarding/certificate`,
    `device-client-onboarding.md`): replaced by reeve enrollment —
    `POST /api/reeve/v1/enroll`, join token → device credential
-   (DECISIONS.md D4).
+   (docs/decisions/agent.md D4).
 2. **Device-API authentication** (X.509 client certificates + HTTP
    Message Signatures [RFC 9421],
    `api-requirements-and-security.md`): replaced by the
    enrollment-issued device credential (bearer token in v1; the
-   Identity seam in DECISIONS.md D1 admits certificate/
+   Identity seam in docs/decisions/auth.md D1 admits certificate/
    message-signature auth later). Wherever this document says
    "device credentials", it means the enrollment-issued credential,
    not Margo's certificate identity.
@@ -176,8 +180,8 @@ therefore cannot enroll against reeve-server:
    deployments` returning `UnsignedAppStateManifest` +
    content-addressed ApplicationDeployment fetch,
    `workload-management-api-1.0.0.yaml`): replaced by reeve's State
-   Manifest poll + OCI render-bundle pull (Section 10.2).
-   REASSESSMENT (DECISIONS.md D13): this item is now
+   Manifest poll + OCI render-bundle pull (08-packaging Section 10.2).
+   REASSESSMENT (docs/decisions/delivery.md D13): this item is now
    PATTERN-FAITHFUL, no longer merely replaced-with-something-else —
    reeve deliberately adopts Margo's own Desired State API model:
    conditional GET with ETag as the manifest digest (RFC 9110 strong
@@ -190,11 +194,11 @@ therefore cannot enroll against reeve-server:
    bundle digest + per-app `secrets_version`), and the
    authentication (item 2) are reeve's. The bundle still carries
    wire-exact Margo artifacts (ApplicationDescription and
-   ApplicationDeployment files, DECISIONS.md D2).
+   ApplicationDeployment files, docs/decisions/tree-render.md D2).
 
 What reeve still emits or ingests on Margo formats stays governed by
 3.1–3.7 and audited in the 3.7 table: `DeploymentStatusManifest`
-ingest keeps Margo's path and payload shape (Section 7.3) — its
+ingest keeps Margo's path and payload shape (05-health-journal Section 7.3) — its
 authentication is the replaced credential of item 2. This list is
 closed: replacing any further Margo surface requires amending this
 section first (3.6 escalation rule applies).

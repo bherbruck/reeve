@@ -1,10 +1,14 @@
+# reeve spec — Durability & Restore Verification (REV-006)
+
+Part of the reeve specification; start at [00-INDEX.md](00-INDEX.md).
+
 ## 9. Durability & Restore Verification (REV-006)
 
 How reeve-server's state survives the loss of the machine it runs
 on. ALL server state — tree history (revision store), enrollment,
 settings, audit, journal ingest, rollout state — is ONE SQLite
-database (DECISIONS.md D13), made durable ENTIRELY IN-BINARY
-(DECISIONS.md D16): a snapshot tier (minutes RPO, the generation
+database (docs/decisions/delivery.md D13), made durable ENTIRELY IN-BINARY
+(docs/decisions/storage.md D16): a snapshot tier (minutes RPO, the generation
 anchor) plus an optional changeset tier (seconds RPO, SQLite's
 session extension), shipping to the same S3-compatible target
 through one pipeline, proven by one mandatory verify-restore loop.
@@ -30,10 +34,10 @@ result is a usable database.
 
 - **Everything is the one SQLite database**, WAL mode, single
   writer: the tree revision store (blobs + revisions, D13),
-  enrollment, settings, secrets ciphertext (§12), audit and
-  terminal session records (§5.4), status journal ingest (§7),
-  rollout state (§11). The former parallel git-mirror/bundle
-  durability path is DELETED — revision sync (§8.2) still gives
+  enrollment, settings, secrets ciphertext (10-secrets §12), audit and
+  terminal session records (03-terminal §5.4), status journal ingest (05-health-journal §7),
+  rollout state (09-rollouts §11). The former parallel git-mirror/bundle
+  durability path is DELETED — revision sync (06-federation §8.2) still gives
   every downstream tier a warm copy of the layers in its scope as a
   side effect, but it is no longer a durability mechanism this
   section depends on or maintains.
@@ -41,7 +45,7 @@ result is a usable database.
   are reproducible from revisions (render is pure, D3) and
   re-materialize on demand.
 - The secrets master key lives in a FILE OUTSIDE the DB
-  (REEVE_DATA/secret.key — §12.2): snapshots ship ciphertext only,
+  (REEVE_DATA/secret.key — 10-secrets §12.2): snapshots ship ciphertext only,
   and restore therefore needs snapshot + keyfile, two artifacts
   from two places (§9.6).
 - SQLite TRUNK ONLY — no forks (no libsql, no bedrock, no patched
@@ -89,13 +93,13 @@ result is a usable database.
 
 ### 9.3 Changeset tier (seconds-RPO, in-binary — fast-follow)
 
-Replaces the former litestream sidecar option (DECISIONS.md D16
+Replaces the former litestream sidecar option (docs/decisions/storage.md D16
 records why: post-D15, WAL-frame replication was the sole remaining
 plaintext escape past the keyfile, the only foreign process on the
 durability path, and a second restore procedure verify-restore
 didn't govern).
 
-- The single writer connection (DECISIONS.md D6 — exactly what
+- The single writer connection (docs/decisions/storage.md D6 — exactly what
   session capture requires) carries an attached session from the
   trunk SQLite session extension. Every N seconds or M commits
   (config `durability.changeset.interval` /
@@ -122,10 +126,10 @@ didn't govern).
   persists outside the DB and the object store (Law 3).
 - A schema migration MUST immediately cut a new generation
   (changesets do not capture schema changes): bootstrap sequence is
-  migrate → if migrated, snapshot → resume streaming (DECISIONS.md
+  migrate → if migrated, snapshot → resume streaming (docs/decisions/storage.md
   D6). A changeset sequence never spans a schema version.
 - The server MAY publish upload lag (age of the last uploaded
-  sequence) as a `durability-lag` event (§6.3).
+  sequence) as a `durability-lag` event (04-status-stream §6.3).
 
 ### 9.4 verify-restore (MUST)
 
@@ -144,7 +148,7 @@ didn't govern).
   path to rot.
 - The result MUST be surfaced in the API and UI as "last verified
   restore: <when>", and published as a `verify-restore` event
-  (§6.3). An unverified or stale-verified target is an
+  (04-status-stream §6.3). An unverified or stale-verified target is an
   operator-visible warning state.
 - A deployment whose verify-restore has never succeeded MUST be
   treated (in UI/API status) as having NO durability tier, whatever
@@ -156,7 +160,7 @@ didn't govern).
   snapshot target MUST offer restore-from-latest as the startup
   path: fetch the latest generation, decrypt, replay changesets
   (§9.3), place the result as the local DB, run migrations
-  idempotently (§10.1), continue as a normal start.
+  idempotently (08-packaging §10.1), continue as a normal start.
   Whether restore is automatic or requires a confirmation flag
   (`--restore-from-target`) is an implementation choice, but the
   path MUST exist and MUST be the documented DR procedure. Disaster
@@ -164,20 +168,20 @@ didn't govern).
   removed — no runbook of special cases, no restore mode that rots
   untested. Tree history restores WITH the snapshot (it is in the
   same DB); render bundles re-materialize on demand.
-- Secrets restore requires the keyfile too (§9.1, §12.2) — the DR
+- Secrets restore requires the keyfile too (§9.1, 10-secrets §12.2) — the DR
   procedure MUST state both artifacts.
 - Data loss on restore is bounded by the tier's RPO — snapshot
   interval (minutes) on the snapshot tier, changeset interval
   (seconds) with the changeset tier enabled; agents' journals
-  re-backfill everything journaled since the restore point (§7.3) —
+  re-backfill everything journaled since the restore point (05-health-journal §7.3) —
   agent-side store-and-forward is itself part of the durability
   story.
 - **Restore fencing (normative):** restore-from-snapshot can
   resurrect manifest state older than what devices have already
-  seen inside the RPO window; without fencing, §10.2's strict
+  seen inside the RPO window; without fencing, 08-packaging §10.2's strict
   monotonicity would make affected devices reject the restored
   server as a rollback attacker. Therefore manifestVersion is the
-  pair `(epoch, counter)`, compared lexicographically (§10.2 defines
+  pair `(epoch, counter)`, compared lexicographically (08-packaging §10.2 defines
   the wire encoding), and a tiny epoch marker lives AT THE SNAPSHOT
   TARGET (not in the DB). The epoch is PER-TIER: each tier fences
   against its own snapshot target.
@@ -190,22 +194,22 @@ didn't govern).
     and readable at the snapshot target.
   - Devices treat an epoch bump as a loggable notable event; a
     counter regression WITHIN an epoch remains a security event
-    (§10.2).
+    (08-packaging §10.2).
 
 Data-value analysis — what the DB holds, split by fate on loss:
 
 | Data | On loss | Why |
 |------|---------|-----|
-| Status journal ingest (§7) | **Reconstructible** | agents re-backfill from device journals with original timestamps; history converges again (bounded by agent retention) |
+| Status journal ingest (05-health-journal §7) | **Reconstructible** | agents re-backfill from device journals with original timestamps; history converges again (bounded by agent retention) |
 | Device capabilities cache | **Reconstructible** | devices MUST re-send on change per Margo; next report repopulates |
 | Tree history (revision store, D13) | **IRREPLACEABLE** | the config source of truth and its full attributable history; now snapshot-covered like everything else |
 | Render bundles / derived artifacts | **Reconstructible** | re-rendered from revisions (pure render, D3) |
 | Presence / derived health | **Reconstructible** | recomputed from journal + channel state |
-| Enrollment (device identity ↔ credential, §3.8) | **IRREPLACEABLE** | losing it orphans every device; re-enrollment is manual, fleet-wide toil |
+| Enrollment (device identity ↔ credential, 01-framework §3.8) | **IRREPLACEABLE** | losing it orphans every device; re-enrollment is manual, fleet-wide toil |
 | Settings | **IRREPLACEABLE** | operator intent, recorded nowhere else (files hold shape, DB holds values) |
-| Secrets (ciphertext, §12) | **IRREPLACEABLE** (with keyfile) | operator-entered values; ciphertext useless without REEVE_DATA/secret.key — back both up |
-| Audit + terminal session records (§5.4) | **IRREPLACEABLE** | forensic record; by definition cannot be regenerated |
-| Rollout state/history (§11) | **IRREPLACEABLE in flight** | a lost in-flight rollout's position must not be guessed; history is audit-like |
+| Secrets (ciphertext, 10-secrets §12) | **IRREPLACEABLE** (with keyfile) | operator-entered values; ciphertext useless without REEVE_DATA/secret.key — back both up |
+| Audit + terminal session records (03-terminal §5.4) | **IRREPLACEABLE** | forensic record; by definition cannot be regenerated |
+| Rollout state/history (09-rollouts §11) | **IRREPLACEABLE in flight** | a lost in-flight rollout's position must not be guessed; history is audit-like |
 
 Default RPO justification: the irreplaceable set changes at human
 cadence (enrollments, settings edits, terminal sessions, rollout
@@ -222,7 +226,7 @@ target, same verify-restore.
 - Snapshots contain the whole irreplaceable set — tree history,
   enrollment credential bindings, settings, audit trail, secrets
   CIPHERTEXT. Secret plaintext cannot leak via snapshots by
-  construction: the master key lives outside the DB (§12.2), so a
+  construction: the master key lives outside the DB (10-secrets §12.2), so a
   stolen snapshot without the keyfile yields no secret values.
   `reeve-server init` MUST warn that the keyfile needs separate
   backup. Snapshots AND changesets are AEAD-encrypted under that
@@ -234,7 +238,7 @@ target, same verify-restore.
   only for pruning).
 - verify-restore MUST replay generations read-only, in a temp
   location, and clean up — never against the live DB path.
-- Terminal audit records are metadata only (§5.5 keeps content out
+- Terminal audit records are metadata only (03-terminal §5.5 keeps content out
   of the DB), so snapshots cannot leak session content by
   construction.
 - Pruning is destructive; credentials that can prune MUST NOT be

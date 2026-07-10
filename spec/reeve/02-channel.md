@@ -1,10 +1,14 @@
+# reeve spec — Persistent Agent Channel (REV-001)
+
+Part of the reeve specification; start at [00-INDEX.md](00-INDEX.md).
+
 ## 4. Persistent Agent Channel (REV-001)
 
 An OPTIONAL, outbound, persistent websocket from reeve-agent to
 reeve-server providing: liveness as fact (open socket = reachable
 *now*; drop = event), server→agent nudges that shorten convergence
 latency without being required for correctness, and multiplexed
-sub-channels for other extensions (the terminal, Section 5, is the
+sub-channels for other extensions (the terminal, 03-terminal Section 5, is the
 first consumer).
 
 Margo's device API is request/response and its deployment-status
@@ -34,12 +38,12 @@ worth polling for has changed; **presence** — the server-side fact
   upgrade.
 - The upgrade request MUST be authenticated with the same device
   credentials as the device API (the enrollment-issued device
-  credential — Section 3.8 item 2). Unknown or
+  credential — 01-framework Section 3.8 item 2). Unknown or
   unauthenticated clients MUST be rejected before upgrade. One
   channel per device: a new authenticated channel atomically
   replaces the old one (old socket closed; crash-only, no draining).
 - The agent MUST NOT attempt the channel unless the server
-  advertises `rev-001/1` (Section 3.3). Upgrade failure is
+  advertises `rev-001/1` (01-framework Section 3.3). Upgrade failure is
   feature-unavailable: log once, keep polling, retry on the
   reconnect schedule (Section 4.5).
 
@@ -47,7 +51,7 @@ worth polling for has changed; **presence** — the server-side fact
 
 All messages are either **control frames** — websocket text, one
 JSON object with a `type` field; unknown `type` values MUST be
-ignored (Section 3.4) — or **data frames** — websocket binary,
+ignored (01-framework Section 3.4) — or **data frames** — websocket binary,
 first 4 bytes the sub-channel id (u32 big-endian), remainder opaque
 payload owned by the sub-channel's registering extension.
 
@@ -69,17 +73,17 @@ server even — allocation never collides.
 Sub-channel semantics:
 
 - `open` for an unsupported `purpose` MUST be answered with
-  `reject`, never by tearing down the channel (Section 3.2).
+  `reject`, never by tearing down the channel (01-framework Section 3.2).
 - Data frames for an id not accepted-and-open MUST be discarded
   silently (frames race `close`; crash-only tolerance).
 - Sub-channels carry bytes; content, flow control, and lifecycle
   beyond open/close belong to the registering extension. Registered
-  purposes: `rev-002/terminal` (Section 5).
+  purposes: `rev-002/terminal` (03-terminal Section 5).
 - Channel teardown implicitly closes all sub-channels; extensions
   MUST treat sub-channel loss as a normal event, not corruption.
 - Any extension needing bidirectional agent↔server bytes MUST use a
   sub-channel rather than a new listener or second websocket.
-  (One-way server→UI events use SSE instead: Section 6.)
+  (One-way server→UI events use SSE instead: 04-status-stream Section 6.)
 
 ### 4.3 Liveness as fact
 
@@ -87,20 +91,20 @@ Sub-channel semantics:
   ping/pong. The server MUST maintain per-device presence (`online`
   + since / `offline` + last-seen) from channel state alone, and
   MUST NOT infer "device dead" from a closed channel — only "link
-  down" (Section 7.4 makes the device- vs link-degraded
+  down" (05-health-journal Section 7.4 makes the device- vs link-degraded
   distinction).
 - Either side SHOULD `ping` when idle past its keepalive interval
   (RECOMMENDED 30 s) and MUST treat a missing `pong` within a
   timeout (RECOMMENDED 10 s) as a dead channel: close the socket,
   emit the presence event.
 - Presence transitions are published to the UI as
-  `device-presence` events (Section 6.3).
+  `device-presence` events (04-status-stream Section 6.3).
 
 ### 4.4 Nudges — optimization, never replacement
 
 - When desired state changes for a device (its manifestVersion
   advances — new render bundle or secrets_version,
-  including via Section 11 wave advancement), the server SHOULD
+  including via 09-rollouts Section 11 wave advancement), the server SHOULD
   send `nudge` with scope `desired-state` on that device's channel.
 - On `nudge` the agent SHOULD run its normal fetch-and-converge
   cycle immediately, subject to a local rate limit (RECOMMENDED: at
@@ -130,7 +134,7 @@ Sub-channel semantics:
   converge identically (same repo fetch, same apply, same Margo
   status reports) whether the channel has been up for a week or has
   never connected.
-- Features layered on the channel degrade per Section 3.2: no
+- Features layered on the channel degrade per 01-framework Section 3.2: no
   presence (UI falls back to last-report recency), no nudges
   (latency = poll interval), no terminal.
 - The agent MUST NOT block startup, enrollment, or its first
@@ -141,7 +145,7 @@ Sub-channel semantics:
 - The channel reuses device-API authentication; it grants no
   authority beyond the device API EXCEPT as a carrier for
   sub-channels, whose purposes carry their own authorization rules
-  (the terminal's, Section 5, are strict).
+  (the terminal's, 03-terminal Section 5, are strict).
 - Nudges disclose "something changed" timing, which devices already
   learn by polling; `hint` MUST NOT carry secret material.
 - A malicious agent with valid credentials can hold a socket open;

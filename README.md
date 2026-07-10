@@ -80,8 +80,8 @@ reeve implements against a pinned snapshot of the Margo specification
 (`spec/margo/`, submodule). Where reeve extends or replaces a Margo
 surface, that's written down — additivity rules, the extension index,
 and every touch on a Margo surface are in
-[`spec/reeve/SPEC.md`](spec/reeve/SPEC.md); implementation decisions
-in [`spec/reeve/DECISIONS.md`](spec/reeve/DECISIONS.md).
+[`spec/reeve/`](spec/reeve/00-INDEX.md); implementation decisions
+in [`docs/decisions/`](docs/decisions/00-INDEX.md).
 
 The upstream system design reeve implements against:
 

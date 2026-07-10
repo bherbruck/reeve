@@ -1,7 +1,11 @@
+# reeve spec — Remote Terminal (REV-002)
+
+Part of the reeve specification; start at [00-INDEX.md](00-INDEX.md).
+
 ## 5. Remote Terminal (REV-002)
 
 On-demand terminal sessions from the reeve UI to a device, carried
-over a Section 4 sub-channel (purpose `rev-002/terminal`). Disabled
+over a 02-channel Section 4 sub-channel (purpose `rev-002/terminal`). Disabled
 by default, enabled only through desired state, short-lived, fully
 audited, relayed by reeve-server as opaque bytes. The guardrails in
 Sections 5.2–5.5 are MUST-level and are summarized in CLAUDE.md
@@ -19,13 +23,13 @@ permits the agent to accept terminal sub-channels at all.
 
 ### 5.1 Transport
 
-- Agent leg: a Section 4 sub-channel, purpose `rev-002/terminal`,
+- Agent leg: a 02-channel Section 4 sub-channel, purpose `rev-002/terminal`,
   opened by the server (even id) when a session is authorized.
-  Framing and open/accept/reject/close semantics are Section 4.2's,
+  Framing and open/accept/reject/close semantics are 02-channel Section 4.2's,
   not restated here.
 - UI leg: a websocket `GET /api/reeve/v1/terminal/{sessionId}` —
   the one genuinely bidirectional UI surface, hence a websocket and
-  not SSE (Section 6).
+  not SSE (04-status-stream Section 6).
 - Sub-channel `open.meta` carries only session bootstrap:
   `sessionId`, requested PTY size, TERM string. Resize and control
   ride in-band in the sub-channel payload; the format is
@@ -41,10 +45,10 @@ permits the agent to accept terminal sub-channels at all.
 - Enablement is expressed ONLY in desired state: a configuration
   item in the device's render bundle (rendered through the overlay
   tree like any other config), so enabling the terminal is a tree
-  revision — with an author and a diff (DECISIONS.md D13: revisions
+  revision — with an author and a diff (docs/decisions/delivery.md D13: revisions
   carry author/message/parent; diff is a query) — subject to the
   same review,
-  history, and federation ownership rules (Section 8.4) as any
+  history, and federation ownership rules (06-federation Section 8.4) as any
   other change.
 - There MUST NOT be any runtime toggle: no API call, UI switch,
   environment variable, or channel message enables the terminal
@@ -87,9 +91,9 @@ permits the agent to accept terminal sub-channels at all.
 - The audit record is written at initiation, BEFORE any bytes flow,
   and finalized at close. A server crash mid-session is finalized
   at next startup as `close reason = server-restart`.
-- Audit records are irreplaceable data (Section 9.5).
+- Audit records are irreplaceable data (07-durability Section 9.5).
 - Lifecycle transitions are published as `terminal-session` events
-  (Section 6.3) — metadata only, never content.
+  (04-status-stream Section 6.3) — metadata only, never content.
 
 ### 5.5 Bridge conduct
 
@@ -114,7 +118,7 @@ The bridge relays bytes only:
 - The threat model assumes a compromised server should gain as
   little as possible: with no runtime toggle, a hostile server
   operator still needs a desired-state revision (visible, attributed,
-  federated per Section 8.4) to open a terminal path to a device
+  federated per 06-federation Section 8.4) to open a terminal path to a device
   that has not enabled it.
 - Timeouts (Section 5.3) bound the blast radius of a stolen UI
   session.

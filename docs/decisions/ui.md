@@ -1,3 +1,7 @@
+# reeve decisions — UI & API Types (D10)
+
+Part of docs/decisions/; start at [00-INDEX.md](00-INDEX.md).
+
 ## D10. API types — utoipa -> openapi.json -> orval (TanStack Query)
 - Server side: every axum route is annotated with utoipa; the
   resulting openapi.json is emitted at build, embedded in the binary
@@ -10,10 +14,10 @@
   no exceptions (CLAUDE.md rule, restated as pipeline).
 - `just gen-api` = run server openapi dump -> orval. CI regenerates
   and fails on drift (`git diff --exit-code ui/src/api`).
-- SSE payloads (SPEC §6.3) are typed through the same pipeline:
+- SSE payloads (spec/reeve/04-status-stream.md §6.3) are typed through the same pipeline:
   event payload schemas are registered as OpenAPI components, so the
   UI's invalidation handlers consume generated types too.
 - Query-key discipline: routes' generated key factories are the only
-  query keys the UI uses — SSE invalidation (SPEC §6) invalidates by
+  query keys the UI uses — SSE invalidation (spec/reeve/04-status-stream.md §6) invalidates by
   those factories, never by hand-built keys.
 

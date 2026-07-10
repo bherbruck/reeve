@@ -1,3 +1,7 @@
+# reeve spec — Device Health & Status Journal (REV-004)
+
+Part of the reeve specification; start at [00-INDEX.md](00-INDEX.md).
+
 ## 7. Device Health & Status Journal (REV-004)
 
 Forensic, gap-free device history despite Law 5. The agent keeps a
@@ -98,7 +102,7 @@ tampering and skew visible).
 
 The server-side model MUST distinguish:
 
-- **Link-degraded**: no presence (Section 4.3) and no fresh reports
+- **Link-degraded**: no presence (02-channel Section 4.3) and no fresh reports
   — but subsequent backfill shows healthy samples during the
   window. The device was fine; the path was not.
 - **Device-degraded**: samples (live or backfilled) breaching
@@ -107,16 +111,16 @@ The server-side model MUST distinguish:
 - **Unknown**: offline window not yet backfilled — MUST be surfaced
   as unknown, never silently assumed healthy or dead.
 
-Transitions are published as `health-state` events (Section 6.3)
+Transitions are published as `health-state` events (04-status-stream Section 6.3)
 with `kind` = `device` | `link`. Reclassification after backfill
 (unknown resolving to healthy or degraded) is normal and MUST
 update history retroactively — exactly what original-timestamp
 ingest makes possible. Rollout health gates consume this
-classification (Section 11.4).
+classification (09-rollouts Section 11.4).
 
 ### 7.5 Federation
 
-Under Section 8, a gateway tier journals what its local agents
+Under 06-federation Section 8, a gateway tier journals what its local agents
 report and backfills its upstream using this same protocol,
 recursively — from upstream's perspective the gateway is an
 agent-shaped source of `(deviceId, seq)` records with original

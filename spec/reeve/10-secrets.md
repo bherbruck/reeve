@@ -1,7 +1,11 @@
+# reeve spec — Secrets (REV-009)
+
+Part of the reeve specification; start at [00-INDEX.md](00-INDEX.md).
+
 ## 12. Secrets (REV-009)
 
 Secrets are desired state BY REFERENCE, never by value
-(DECISIONS.md D15, the deciding document — this section is the
+(docs/decisions/secrets.md D15, the deciding document — this section is the
 normative wire/behavior summary). Tree content and rendered
 artifacts carry `${secret:<name>}` references; values NEVER enter
 the config plane: no plaintext in revisions, renders, bundles,
@@ -15,16 +19,17 @@ those artifacts only ever contain references.
 - Resolution is SERVER-SIDE AT REQUEST TIME — never at render time.
   Render stays pure (D3) and bundles stay secret-free. A
   secret-typed parameter inside the wire-exact ApplicationDeployment
-  carries the reference string as its value (audited in §3.7).
+  carries the reference string as its value (audited in
+  01-framework §3.7).
 
 ### 12.2 Storage
 
 - Secrets live in a table in reeve-server's SQLite, AEAD-encrypted
   under a master key in a FILE OUTSIDE the DB (REEVE_DATA/
   secret.key, 0600, created at init). Snapshots therefore ship
-  ciphertext only; restore = snapshot + keyfile (§9.1, §9.5).
+  ciphertext only; restore = snapshot + keyfile (07-durability §9.1, 07-durability §9.5).
   `reeve-server init` MUST warn that the keyfile needs separate
-  backup (§10.3).
+  backup (08-packaging §10.3).
 - The same store holds the server's own operational secrets (zot
   upstream credentials, S3 keys, tier tokens).
 - UI: secrets are write-only after entry — set, rotate, view
@@ -56,15 +61,15 @@ those artifacts only ever contain references.
 - Rotating a secret bumps its version => affected devices' per-app
   `secrets_version` (hash of resolved secret names+versions, never
   values) changes in the State Manifest => manifestVersion bumps =>
-  REV-001 nudge says "poll now" (§4.4).
+  REV-001 nudge says "poll now" (02-channel §4.4).
 - Agent diff: bundle digest unchanged + secrets_version changed =>
   re-resolve, rewrite only env files whose content differs,
   `up -d` affected apps. No bundle re-pull. Offline devices catch
   the same rotation on next poll (nudge = optimization, never
   correctness).
-- Rotation state is published as `secret-rotation` events (§6.3).
+- Rotation state is published as `secret-rotation` events (04-status-stream §6.3).
 - Coordinated rotation across apps/devices is explicitly NOT
-  decided (DECISIONS.md NOT-decided list) — implementations MUST
+  decided (docs/decisions/00-INDEX.md NOT-decided list) — implementations MUST
   NOT improvise it.
 
 ### 12.5 Federation and air-gap
@@ -74,11 +79,11 @@ those artifacts only ever contain references.
   RE-ENCRYPTED under the gateway's own local master key (per-tier
   keys: a stolen snapshot from one tier + another tier's key yields
   nothing). Gateways serve cached scoped secrets through WAN
-  outages; rotations queue and land on reconnect (§8.3 pattern).
+  outages; rotations queue and land on reconnect (06-federation §8.3 pattern).
 - Air-gap: secret sets export encrypted TO THE DESTINATION
   GATEWAY'S PUBLIC KEY (each gateway mints a keypair at init;
   fingerprint verified out-of-band at commissioning). Never
-  plaintext on media (§8.5).
+  plaintext on media (06-federation §8.5).
 
 ### 12.6 Security
 

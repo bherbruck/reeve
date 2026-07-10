@@ -1,3 +1,7 @@
+# reeve decisions — Auth (D1)
+
+Part of docs/decisions/; start at [00-INDEX.md](00-INDEX.md).
+
 ## D1. Auth — one Identity seam, three human modes, one device credential
 - All auth is tower middleware + axum extractors. Handlers receive
   `Identity` (Device(id) | Human(user, role) | Anonymous) from an
@@ -34,7 +38,7 @@
   onboarding flow (POST /api/v1/onboarding + Certificate API). reeve
   v1 REPLACES both with join-token enrollment (D4) + bearer device
   token. Consequence: a vanilla Margo device client cannot enroll
-  against reeve-server in v1; SPEC.md §3.8 scopes the interop claim
+  against reeve-server in v1; spec/reeve/01-framework.md §3.8 scopes the interop claim
   accordingly and lists all replaced surfaces. The Identity
   extractor seam is where cert/message-signature auth lands later
   with zero handler changes (see NOT-decided list).

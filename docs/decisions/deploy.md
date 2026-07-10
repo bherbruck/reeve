@@ -1,8 +1,12 @@
+# reeve decisions — Deployment (D9)
+
+Part of docs/decisions/; start at [00-INDEX.md](00-INDEX.md).
+
 ## D9. The canonical compose file — one file, every tier
 - deploy/compose.yml is THE deployment artifact for reeve-server at
   any tier. Same services; tier is chosen by env vars, optional
   sidecars by compose profiles. It is the ONE checked-in compose
-  file — the explicit exception to SPEC §10.6's no-emittable-files
+  file — the explicit exception to spec/reeve/08-packaging.md §10.6's no-emittable-files
   rule (recorded there); `reeve-server init` emits a copy/variant of
   it, and CI keeps the two from drifting.
 - Tier selection: REEVE_UPSTREAM unset => this instance is a ROOT

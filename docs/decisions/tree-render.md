@@ -1,3 +1,7 @@
+# reeve decisions — Tree & Render (D2, D3, D11, D12)
+
+Part of docs/decisions/; start at [00-INDEX.md](00-INDEX.md).
+
 ## D2. Rendered bundle layout (the agent's wire contract)
 The render bundle is an OCI artifact (D13), pulled by digest and
 unpacked to a temp dir + atomic dir swap. Layout inside the bundle:

@@ -1,3 +1,7 @@
+# reeve spec — Packaging & Self-Hosting (REV-007)
+
+Part of the reeve specification; start at [00-INDEX.md](00-INDEX.md).
+
 ## 10. Packaging & Self-Hosting (REV-007)
 
 How reeve ships and installs itself: one static binary per role
@@ -33,24 +37,27 @@ skopeo, crane) remain debugging tools, not casualties.
   - Default configuration (files hold shape; values live in the DB
     per Law 4 — the embedded default is the shape).
   - Shell completions (`--completions <shell>`).
-- Both binaries MUST support `--spec`, printing this specification
-  (embedded at build) — the deployed artifact carries its own
-  contract.
+- Both binaries MUST support `--spec`: the binary embeds the
+  `spec/reeve/` directory (the split files are the canonical form —
+  there is no concatenation target or build artifact) and prints
+  the files in index order at runtime; `--spec <name>` MAY print a
+  single section (e.g. `--spec 07-durability`). The deployed
+  artifact carries its own contract.
 - Version output MUST include the workspace git revision (§10.4
   depends on it).
 
 ### 10.2 Desired-state delivery: State Manifest poll + native OCI pull
 
 (v2 of this section — v1 was git over smart HTTP; git is removed
-from the runtime by DECISIONS.md D13.)
+from the runtime by docs/decisions/delivery.md D13.)
 
 - **Manifest poll**: `GET /api/reeve/v1/manifest` (device-scoped by
   its credential) returns the device's State-Manifest-shaped JSON:
   `manifestVersion`, render-bundle digest + pull URL, per-app
-  `secrets_version` (§12). Conditional GET: the ETag is the
+  `secrets_version` (10-secrets §12). Conditional GET: the ETag is the
   manifest digest, an RFC 9110 strong validator with the digest
   grammar `sha256:<hex>`; `If-None-Match` match returns 304. This
-  models Margo's Desired State API (§3.8 item 3 reassessment).
+  models Margo's Desired State API (01-framework §3.8 item 3 reassessment).
 - **Anti-rollback (adopted from Margo)**: `manifestVersion` is
   logically the pair `(epoch, counter)` compared lexicographically,
   encoded on the wire as ONE monotonically increasing unsigned
@@ -62,20 +69,20 @@ from the runtime by DECISIONS.md D13.)
   rejected and logged as a SECURITY event, and the agent continues
   from last known state (Law 5). An increase that bumps the epoch
   bits is accepted and logged as a NOTABLE event (a restore
-  happened, §9.5 — the server's restore fencing guarantees a
+  happened, 07-durability §9.5 — the server's restore fencing guarantees a
   restored server always compares strictly greater).
 - **Artifact pull**: the render bundle, vendored app packages, and
   agent binaries are OCI artifacts served natively, read-only
   (GET manifest / GET blob by digest, standard OCI distribution
-  routes under `/v2/`; DECISIONS.md D7) through the same axum
+  routes under `/v2/`; docs/decisions/delivery.md D7) through the same axum
   stack. No push routes exist — desired state is written only by
-  the rendering pipeline (§8.4). Pull is content-addressed and
+  the rendering pipeline (06-federation §8.4). Pull is content-addressed and
   immutable: verify digest, unpack to temp, atomic dir swap,
   converge (D5).
-- Same port as everything else: UI, REST API, SSE (§6), websockets
-  (§4, §5), native artifact /v2 routes, and — when the registry
+- Same port as everything else: UI, REST API, SSE (04-status-stream §6), websockets
+  (02-channel §4, 03-terminal §5), native artifact /v2 routes, and — when the registry
   sidecar is deployed — the image proxy on the same /v2 space
-  (DECISIONS.md D8). ONE listening socket total per server. No
+  (docs/decisions/delivery.md D8). ONE listening socket total per server. No
   path shadows Margo's `/api/v1/…`.
 - Wire behavior on /v2 MUST be standard OCI distribution pull:
   stock clients (oras, skopeo, crane) MUST fetch reeve's artifacts
@@ -83,7 +90,7 @@ from the runtime by DECISIONS.md D13.)
   client.
 - Auth: the same device credential as the device API authorizes a
   device to poll exactly its own manifest and pull exactly the
-  artifacts its manifest references; tier credentials (§8)
+  artifacts its manifest references; tier credentials (06-federation §8)
   authorize a gateway's revision sync scope. Anonymous pull MUST
   NOT be enabled by default.
 
@@ -98,9 +105,9 @@ from the runtime by DECISIONS.md D13.)
   files, and the zot configuration when the registry profile is
   selected (D9). Durability needs no sidecar and therefore no
   emitted config — both tiers are in-binary, env/config-selected
-  (§9). init also creates the secrets master keyfile
+  (07-durability §9). init also creates the secrets master keyfile
   (REEVE_DATA/secret.key, 0600) and MUST warn that the keyfile
-  needs separate backup (§12.2).
+  needs separate backup (10-secrets §12.2).
 - Both commands MUST be idempotent — Law 3 applies to installers:
   re-running `install` on a half-installed box (killed mid-install)
   converges to installed; it never errors on "already exists" and
@@ -114,7 +121,7 @@ from the runtime by DECISIONS.md D13.)
 - Behind the cargo feature `embedded-agents`, reeve-server embeds
   the reeve-agent binaries for BOTH architectures and serves them
   as OCI artifacts on the native /v2 routes ("the agent is an
-  artifact", DECISIONS.md D7), plus `GET /install` (a shell
+  artifact", docs/decisions/delivery.md D7), plus `GET /install` (a shell
   installer script).
 - The script detects the machine architecture, pulls the matching
   agent artifact by digest FROM THE SERVER IT WILL ENROLL AGAINST
@@ -128,8 +135,8 @@ from the runtime by DECISIONS.md D13.)
   the feature does not admit mixing).
 - The endpoint requires an enrollment credential/token by default;
   a deployment MAY open it on trusted networks (config). Without
-  the feature the route is absent (404) — invisible, per §3.1
-  rule 4.
+  the feature the route is absent (404) — invisible, per
+  01-framework §3.1 rule 4.
 
 ### 10.5 Self-management — the agent as a workload
 
@@ -137,7 +144,7 @@ from the runtime by DECISIONS.md D13.)
   (an `ApplicationDescription` valid per `margo-package`) for
   reeve-agent itself — the agent binary it references is the OCI
   artifact of §10.4 — so agent updates flow through the normal
-  desired-state tree: authored at one tier, staged via Section 11,
+  desired-state tree: authored at one tier, staged via 09-rollouts Section 11,
   converged like any other workload. No side-band updater exists.
 - Update mechanics: rename-and-exec or service restart, A/B on the
   binary path — install the new binary beside the old, atomically
@@ -147,7 +154,7 @@ from the runtime by DECISIONS.md D13.)
   window is rolled back to the retained previous binary by the
   supervising unit's failure handling. `kill -9` at any point
   leaves either old-running or new-running — never neither (Law 3).
-- The agent reports its version in status (§7.2, §3.3), which is
+- The agent reports its version in status (05-health-journal §7.2, 01-framework §3.3), which is
   how a staged agent rollout's health gates observe success.
 
 ### 10.6 deploy/
@@ -158,7 +165,7 @@ operators who insist, and CI examples (musl build matrix,
 embedding, release). Anything `reeve-server init` or `reeve-agent
 install` can emit MUST NOT be duplicated as a checked-in file that
 can drift — with ONE named exception: `deploy/compose.yml`, the
-canonical tier-agnostic compose file (DECISIONS.md D9). `init`
+canonical tier-agnostic compose file (docs/decisions/deploy.md D9). `init`
 emits a copy/variant of it and CI MUST keep the two in sync.
 
 ### 10.7 Security
@@ -175,10 +182,10 @@ emits a copy/variant of it and CI MUST keep the two in sync.
 - Pull-only transport (no push routes exist) removes an entire
   class of write-path attacks against desired state.
 - Self-update executes a binary the server delivered; the
-  desired-state commit that triggered it is attributable (§8.4),
+  desired-state commit that triggered it is attributable (06-federation §8.4),
   and A/B retention bounds the damage of a bad (not malicious)
   binary. A malicious server is already the agent's root of trust —
-  established at enrollment (Section 3.8 item 1), the same
+  established at enrollment (01-framework Section 3.8 item 1), the same
   trust-the-server-you-enrolled-with posture as Margo's onboarding
   model (`spec/margo/…/device-client-onboarding.md`).
 

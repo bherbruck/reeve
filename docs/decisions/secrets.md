@@ -1,3 +1,7 @@
+# reeve decisions — Secrets (D15)
+
+Part of docs/decisions/; start at [00-INDEX.md](00-INDEX.md).
+
 ## D15. Secrets — referenced in config, valued out-of-band
 - Secrets are desired state BY REFERENCE, never by value. Tree/
   params carry `${secret:<name>}` (shape); values NEVER enter the
@@ -56,6 +60,6 @@
   its `value` string — syntactically valid per the pinned schema
   (parameter values are plain strings; verified against
   DesiredState-001.yaml), substituted agent-side at apply. Recorded
-  in SPEC §3.7's audit table as a value convention, not a field
+  in spec/reeve/01-framework.md §3.7's audit table as a value convention, not a field
   change.
 

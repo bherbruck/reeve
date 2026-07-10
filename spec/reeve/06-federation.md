@@ -1,3 +1,7 @@
+# reeve spec — Federation & Gateway (REV-005)
+
+Part of the reeve specification; start at [00-INDEX.md](00-INDEX.md).
+
 ## 8. Federation & Gateway (REV-005)
 
 Multi-tier operation: a reeve-server MAY take an optional
@@ -43,7 +47,7 @@ appends what the parent published, verbatim.
 - A gateway tier MUST sync from its parent the tree revisions
   relevant to its scope and render locally — render is pure (D3),
   so renders are byte-identical at any tier.
-- Protocol: the identical shape as device delivery (Section 10.2),
+- Protocol: the identical shape as device delivery (08-packaging Section 10.2),
   one tier up — conditional GET on the parent's revision head
   (ETag), then content-addressed blob fetch for missing digests.
   Pull-based, resumable, idempotent by digest: a sync killed
@@ -53,7 +57,7 @@ appends what the parent published, verbatim.
 - The synced stream is append-only and IMMUTABLE at the gateway: a
   synced revision that disagrees with an already-held revision id
   (id/digest mismatch) MUST be surfaced as an error (UI, logs,
-  Section 6 consumers) and MUST NOT be auto-resolved — it means the
+  04-status-stream Section 6 consumers) and MUST NOT be auto-resolved — it means the
   single-writer rule was violated somewhere, and hiding it would
   convert a spec violation into silent divergence. (This is the
   append-only successor of the old fast-forward-or-error rule.)
@@ -78,7 +82,7 @@ misbehaving parent.
 ### 8.3 Status flow upstream
 
 A gateway ingests local agents' status and journal records
-(Section 7), then backfills its parent with the same protocol,
+(05-health-journal Section 7), then backfills its parent with the same protocol,
 recursively: original timestamps, `(deviceId, seq)` idempotency,
 late-ingest semantics unchanged at every hop. Upstream outage
 buffers status at the gateway (bounded, gap-marked like any
@@ -101,8 +105,8 @@ The MUST-level core of federation:
   conflict-resolution machinery in reeve, by design; every sync
   appends verbatim or errors (§8.2).
 - Ownership applies to every desired-state change without exception
-  — including terminal enablement (Section 5.2) and rollouts
-  (Section 11.7), each authored at exactly one tier, propagating
+  — including terminal enablement (03-terminal Section 5.2) and rollouts
+  (09-rollouts Section 11.7), each authored at exactly one tier, propagating
   downward only.
 
 ### 8.5 Air-gap transfer
@@ -112,16 +116,16 @@ Where no network path exists between tiers:
 - **Export**: revisions, packages, and images all export as signed
   OCI layout archives (oras/skopeo-compatible, inspectable with
   stock tooling) — ONE archive format for everything on the media
-  (DECISIONS.md D13; git bundles are gone). Signing covers the
+  (docs/decisions/delivery.md D13; git bundles are gone). Signing covers the
   archive index and content digests.
 - **Import**: verifies signature and integrity, then appends
   revisions under §8.2 rules — verbatim append or error. A tampered
   or truncated archive MUST be rejected whole.
-- **Return trip**: status exports journal records (Section 7.3
+- **Return trip**: status exports journal records (05-health-journal Section 7.3
   form) for import at the parent, preserving original timestamps —
   sneakernet backfill.
 - **Secrets** ride the same media encrypted to the destination
-  gateway's public key (Section 12.5) — never plaintext on media.
+  gateway's public key (10-secrets Section 12.5) — never plaintext on media.
 - Export and import MUST be idempotent: importing the same archive
   twice is a no-op (Law 3 applied to sneakernet).
 
@@ -140,16 +144,16 @@ from its upstream changes nothing for the gateway's local agents.
 - Tier credentials are scoped: a gateway can sync only the
   revisions/blobs in its scope and backfill only its subtree's
   devices; the parent MUST enforce that scope server-side. Scoped
-  secret sync is further constrained per Section 12.5.
+  secret sync is further constrained per 10-secrets Section 12.5.
 - Archive signing keys are tier identities; key distribution for
   air-gapped import is out of band by definition and MUST be
   documented per deployment (gateway keypairs minted at init,
-  fingerprints verified at commissioning — Section 12.5).
+  fingerprints verified at commissioning — 10-secrets Section 12.5).
 - A compromised gateway can fabricate status for its subtree and
   author its own layers — but cannot alter layers it does not own,
   because upstream accepts no desired-state writes from below at
   all (data flows down; status flows up).
 - Single-writer plus append-only revisions makes desired-state
   history at every tier an attributable chain — the property
-  Section 5.6 leans on.
+  03-terminal Section 5.6 leans on.
 

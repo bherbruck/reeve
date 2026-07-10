@@ -1,11 +1,15 @@
+# reeve decisions — Agent (D4, D5)
+
+Part of docs/decisions/; start at [00-INDEX.md](00-INDEX.md).
+
 ## D4. Enrollment ceremony
 - Operator creates a join token in the UI/API: TTL + max-uses
   (default: 24h, 1 use). Token is random, stored hashed.
 - `reeve-agent install --server https://reeve.example --token <JT>`:
   1. POST /api/reeve/v1/enroll { join_token, hostname, arch,
-     agent_version } — a reeve surface (SPEC §3.1 rule 4; never under
+     agent_version } — a reeve surface (spec/reeve/01-framework.md §3.1 rule 4; never under
      Margo's /api/v1/). Margo's POST /api/v1/onboarding is NOT
-     served; that replacement is recorded in D1 and SPEC §3.8.
+     served; that replacement is recorded in D1 and spec/reeve/01-framework.md §3.8.
   2. Server: validates token, creates device row + initial desired
      state, issues device_id + device token. Atomic (one SQLite tx —
      the revision store lives in the same DB, D13). This ONE token

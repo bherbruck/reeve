@@ -1,3 +1,7 @@
+# reeve decisions — Storage & Durability Plumbing (D6, D16)
+
+Part of docs/decisions/; start at [00-INDEX.md](00-INDEX.md).
+
 ## D6. Migrations & storage plumbing (mostly restating law as picks)
 - refinery with embedded migrations; run at every startup, both
   binaries. Schema version asserted by verify-restore (REV-006).
@@ -18,7 +22,7 @@
 DECIDED: litestream is REMOVED from the design entirely. Seconds-RPO
 is provided in-binary via SQLite's session extension (trunk SQLite,
 rusqlite `session` feature).
-- Two durability tiers, both in-binary, one pipeline (SPEC §9):
+- Two durability tiers, both in-binary, one pipeline (spec/reeve/07-durability.md §9):
   1. SNAPSHOT tier (the generation anchor, ships first): VACUUM INTO
      on interval, AEAD-encrypted under the D15 external keyfile,
      atomic upload (temp key + finalize), retention window.
@@ -37,7 +41,7 @@ rusqlite `session` feature).
   index).
 - verify-restore proves the WHOLE chain (snapshot + all changesets +
   schema + recency of last applied seq). One restore procedure for
-  everything (SPEC §9.4).
+  everything (spec/reeve/07-durability.md §9.4).
 - Crash-only: an unflushed in-memory session lost to kill -9 costs
   at most the configured interval (that IS the RPO); startup resumes
   from the last uploaded sequence. No session state outside the DB
@@ -53,6 +57,6 @@ rusqlite `session` feature).
   procedure verify-restore didn't govern. Changesets also replay
   TRANSACTIONS (logical row changes), so point-in-time restore lands
   on a transaction boundary of our own schema — coherent state, not
-  whatever pages had flushed. The Durability trait seam (SPEC §9.1)
+  whatever pages had flushed. The Durability trait seam (spec/reeve/07-durability.md §9.1)
   is what makes this reversible if the changeset tier disappoints on
   the bench, and where a future engine-native CDC could slot.

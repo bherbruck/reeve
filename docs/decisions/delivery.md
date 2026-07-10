@@ -1,3 +1,7 @@
+# reeve decisions — Delivery & Artifacts (D7, D8, D13)
+
+Part of docs/decisions/; start at [00-INDEX.md](00-INDEX.md).
+
 ## D7. Artifact serving — native read-only OCI, never a sidecar
 (v2 of this decision — v1 was embedded git serving; git is removed
 from the runtime entirely by D13.)
@@ -69,7 +73,7 @@ DECIDED: git is removed from the runtime architecture entirely.
   enforces manifestVersion strict monotonicity (reject + log
   security event on regression — Margo's anti-rollback check,
   adopted; manifestVersion is (epoch, counter) packed into one u64,
-  epoch bumped by restore fencing — SPEC §9.5/§10.2), then pulls
+  epoch bumped by restore fencing — spec/reeve/07-durability.md §9.5/§10.2), then pulls
   the referenced render artifact from /v2 by
   digest, verifies, unpacks to temp, atomic dir swap, converges (D5
   unchanged). Devices never speak git.

@@ -1,3 +1,7 @@
+# reeve decisions — Tree Authoring (D14)
+
+Part of docs/decisions/; start at [00-INDEX.md](00-INDEX.md).
+
 ## D14. Tree authoring is an API — automation-friendly by design
 - The revision store's single writer is reeve-server's API. That API
   MUST be first-class for automation: token-authed, idempotent

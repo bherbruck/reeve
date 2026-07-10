@@ -12,11 +12,28 @@ Margo sandbox). If either is empty, run `git submodule update --init
 ## Spec layout
 - `spec/margo/` — submodule, pinned Margo spec snapshot (PR2). Read
   only. Never hand-edit; re-pin by bumping the submodule commit.
-- `spec/reeve/` — ours. Divergences from Margo, extensions Margo
-  doesn't cover, decisions we made where the spec is silent. This is
-  where "ours entirely" (below) gets written down.
+- `spec/reeve/` — ours, split per concern (start: 00-INDEX.md).
+  Wire shapes, protocol semantics, normative behavior — what an
+  independent implementation needs. "Ours entirely" (below) gets
+  written down here.
+- `docs/decisions/` — our build choices (crates, sidecars, tools),
+  D-numbered; start at its 00-INDEX.md.
 - `reference/` — submodule, Margo sandbox. Reference implementation,
   not authoritative — spec/margo/ wins on conflict.
+
+## Doc routing — implementing X, read Y
+| Working on | Read |
+|---|---|
+| types / wire formats | spec 01-framework + decisions delivery.md |
+| agent channel / terminal | spec 02-channel + 03-terminal + decisions auth.md |
+| status, SSE, health | spec 04-status-stream + 05-health-journal |
+| federation / tiers | spec 06-federation + decisions storage.md |
+| durability / restore | spec 07-durability + decisions storage.md |
+| tree, render, rollouts | spec 09-rollouts + decisions tree-render.md |
+| secrets | spec 10-secrets + decisions secrets.md + auth.md |
+| packaging / install | spec 08-packaging + decisions deploy.md |
+| UI | decisions ui.md + spec 04-status-stream |
+| enrollment / device auth | decisions auth.md + agent.md + spec 01-framework §3.8 |
 
 ## The Five Laws
 1. **Spec-grounded.** Implement against the pinned Margo spec in
@@ -33,7 +50,7 @@ Margo sandbox). If either is empty, run `git submodule update --init
 4. **State lives in engines with someone else's test suite.** ALL
    server state — including desired-state history — is SQLite (WAL):
    a content-addressed revision store (blobs + append-only revisions,
-   see spec/reeve/DECISIONS.md D13). Change-log durability is the
+   see docs/decisions/delivery.md D13). Change-log durability is the
    SQLite session extension (trunk, D16) — no VCS, no replication
    sidecar in the runtime. Nothing load-bearing lives only in RAM.
    Config in files; settings in the DB. Never commit values, only
@@ -52,7 +69,7 @@ Margo sandbox). If either is empty, run `git submodule update --init
   redefinitions of spec fields.
 - **PATTERN-FAITHFUL:** per-device desired state delivered Margo's way
   (State-Manifest poll + content-addressed pull, conditional GET,
-  monotonic manifestVersion — DECISIONS.md D13), pull-based agent,
+  monotonic manifestVersion — docs/decisions/delivery.md D13), pull-based agent,
   workload/device management (WFM/DFM) split — keep Margo's shape, our
   implementation.
 - **OURS ENTIRELY:** everything the spec doesn't nail down or gets wrong
@@ -92,7 +109,7 @@ Margo sandbox). If either is empty, run `git submodule update --init
   is its own page. No create/edit/detail modals.
 
 ## Remote terminal (guardrails)
-Full spec: `spec/reeve/SPEC.md` Section 5 (REV-002). Summary here is
+Full spec: `spec/reeve/03-terminal.md` (REV-002, Section 5). Summary here is
 MUST-level:
 - Terminal disabled by default; enabled only via desired state (a
   config commit with an author and a diff), never a runtime toggle.
