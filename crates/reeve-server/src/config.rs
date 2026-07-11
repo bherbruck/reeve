@@ -14,6 +14,18 @@
 //!   declared render input, tree-render.md D3); default
 //!   localhost:<listen port>
 //!
+//! Zot image-registry proxy (C11, docs/decisions/delivery.md D8 —
+//! /v2 image repos reverse-proxy to the zot sidecar; unset => the
+//! proxy is absent and non-native /v2 repos 404):
+//! - REEVE_ZOT_URL               backend base url, http:// only (the
+//!   sidecar is co-located; zot accepts connections only from
+//!   reeve-server, D8). Unset => no proxy.
+//! - REEVE_ZOT_USERNAME          optional Basic credential the proxy
+//! - REEVE_ZOT_PASSWORD          injects toward zot (set together).
+//!   Unset => vault internal-scope `zot.upstream.username`/`.password`
+//!   (spec/reeve/10-secrets.md §12.2 typed getter) when ext-secrets is
+//!   compiled in; otherwise anonymous toward zot.
+//!
 //! Durability (C6, spec/reeve/07-durability.md — tiers are config, not
 //! surgery, §9.1):
 //! - REEVE_DURABILITY            none (default) | snapshot | changeset
@@ -28,6 +40,24 @@
 //! - REEVE_DURABILITY_CHANGESET_INTERVAL_SECS  default 5 (§9.3)
 //! - REEVE_DURABILITY_CHANGESET_COMMITS        default 100 (§9.3)
 //! - REEVE_DURABILITY_VERIFY_INTERVAL_SECS     default 86400 (§9.4)
+//!
+//! Federation (C10, spec/reeve/06-federation.md §8.1; docs/decisions/
+//! deploy.md D9: tier selection is REEVE_UPSTREAM presence — same
+//! binary, same image, no mode flag):
+//! Install bootstrap (C12, spec/reeve/08-packaging.md §10.4; only
+//! consulted by builds with the `embedded-agents` feature):
+//! - REEVE_INSTALL_OPEN          true|1 => GET /install and the agent
+//!   artifact pulls skip the enrollment-token requirement (trusted
+//!   networks only). Default: closed.
+//!
+//! - REEVE_UPSTREAM               parent tier base URL; present =>
+//!   this instance is a gateway tier, absent => root (unchanged)
+//! - REEVE_UPSTREAM_TOKEN         tier credential presented upstream
+//!   (§8.7 scoped tier tokens); REQUIRED when REEVE_UPSTREAM is set
+//! - REEVE_SITE                   site label this gateway owns (its
+//!   `20-site.<label>` overlay layer, §8.4 single writer); REQUIRED
+//!   when REEVE_UPSTREAM is set
+//! - REEVE_SYNC_INTERVAL_SECS     sync loop period, default 60
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -74,6 +104,55 @@ pub struct Config {
     pub registry_endpoint: String,
     /// Durability tier configuration (C6, spec/reeve/07-durability.md).
     pub durability: DurabilityConfig,
+    /// Zot sidecar reverse-proxy (C11, docs/decisions/delivery.md D8):
+    /// non-`reeve/*` /v2 repos proxy here. `None` => proxy absent —
+    /// proxied repos fall through to the native 404.
+    pub zot: Option<ZotConfig>,
+    /// Federation tier (C10, spec/reeve/06-federation.md §8.1;
+    /// deploy.md D9): `Some` => gateway syncing from a parent tier,
+    /// `None` => root. Presence also selects
+    /// [`crate::ownership::Ownership::Gateway`] at bootstrap (§8.4).
+    pub federation: Option<FederationConfig>,
+    /// C12 §10.4: open the /install bootstrap (no enrollment token)
+    /// on trusted networks. Parsed unconditionally, consumed only by
+    /// `embedded-agents` builds. Default false — closed.
+    pub install_open: bool,
+}
+
+/// Gateway-tier configuration (spec/reeve/06-federation.md §8.1:
+/// "configuration is one optional value: `upstream` (URL + credentials
+/// for the parent tier)" — plus the site layer this tier owns, §8.4).
+#[derive(Debug, Clone)]
+pub struct FederationConfig {
+    /// Parent tier base URL, normalized without a trailing slash.
+    pub upstream: String,
+    /// Tier credential (`rvt_…`) presented on every sync/backfill call
+    /// (§8.7: the parent enforces its scope server-side).
+    pub token: String,
+    /// The site label whose `20-site.<site>` layer THIS tier authors
+    /// (§8.4: a gateway authors its own site layer only, plus its
+    /// locally-enrolled device layers).
+    pub site: String,
+    /// Sync loop period (revisions + secrets + status forwarding).
+    pub sync_interval_secs: u64,
+}
+
+/// Backend for the /v2 image reverse proxy (docs/decisions/delivery.md
+/// D8: "reeve-server reverse-proxies image /v2/* routes to the zot
+/// sidecar"; spec/reeve/08-packaging.md §10.2: one /v2 space, one
+/// listening socket).
+#[derive(Debug, Clone)]
+pub struct ZotConfig {
+    /// Base URL, e.g. `http://127.0.0.1:5000` — normalized without a
+    /// trailing slash. http only: the sidecar is co-located and
+    /// firewalled to reeve-server (D8), so the boring hyper-util
+    /// client needs no TLS stack.
+    pub url: String,
+    /// Basic credential injected toward zot (D8: "the proxy terminates
+    /// device auth and speaks its own credential to zot"). Env pair
+    /// wins; absent => vault internal scope, else anonymous.
+    pub username: Option<String>,
+    pub password: Option<String>,
 }
 
 /// Durability tier selection (spec/reeve/07-durability.md §9.1: tiers
@@ -187,6 +266,14 @@ impl Config {
             get("REEVE_REGISTRY").unwrap_or_else(|| format!("localhost:{}", listen.port()));
 
         let durability = Self::durability_from_lookup(&get)?;
+        let zot = Self::zot_from_lookup(&get)?;
+        let federation = Self::federation_from_lookup(&get)?;
+
+        let install_open = match get("REEVE_INSTALL_OPEN").as_deref() {
+            None | Some("") | Some("false") | Some("0") => false,
+            Some("true") | Some("1") => true,
+            Some(other) => bail!("REEVE_INSTALL_OPEN must be true|false, got {other:?}"),
+        };
 
         Ok(Config {
             listen,
@@ -195,7 +282,102 @@ impl Config {
             session_ttl_secs,
             registry_endpoint,
             durability,
+            zot,
+            federation,
+            install_open,
         })
+    }
+
+    /// Federation tier selection (C10, deploy.md D9: REEVE_UPSTREAM
+    /// presence IS the tier). Fail closed at startup: an upstream
+    /// without a credential or a site is a misconfiguration — a
+    /// gateway that cannot sync or does not know which layer it owns
+    /// must not boot as a silent root.
+    fn federation_from_lookup(
+        get: &impl Fn(&str) -> Option<String>,
+    ) -> anyhow::Result<Option<FederationConfig>> {
+        let Some(raw) = get("REEVE_UPSTREAM") else {
+            if get("REEVE_UPSTREAM_TOKEN").is_some() || get("REEVE_SITE").is_some() {
+                bail!("REEVE_UPSTREAM_TOKEN/REEVE_SITE require REEVE_UPSTREAM");
+            }
+            return Ok(None);
+        };
+        let parsed = url::Url::parse(&raw)
+            .context("REEVE_UPSTREAM must be an absolute URL, e.g. https://hub.example:8420")?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            bail!("REEVE_UPSTREAM must be http(s)://, got scheme {:?}", parsed.scheme());
+        }
+        let Some(token) = get("REEVE_UPSTREAM_TOKEN") else {
+            bail!("REEVE_UPSTREAM requires REEVE_UPSTREAM_TOKEN (the tier credential, §8.7)");
+        };
+        let Some(site) = get("REEVE_SITE") else {
+            bail!(
+                "REEVE_UPSTREAM requires REEVE_SITE (the site layer this gateway owns, \
+                 federation §8.4)"
+            );
+        };
+        // Same label grammar as a `20-site.<label>` layer dir (D11):
+        // the value is spliced into ownership prefixes and layer paths.
+        if site.is_empty()
+            || site.len() > 128
+            || !site.as_bytes()[0].is_ascii_alphanumeric()
+            || site.ends_with('.')
+            || site
+                .chars()
+                .any(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')))
+        {
+            bail!("REEVE_SITE must be a valid site label ([A-Za-z0-9._-], alphanumeric start)");
+        }
+        let sync_interval_secs: u64 = match get("REEVE_SYNC_INTERVAL_SECS") {
+            Some(v) => v.parse().context("REEVE_SYNC_INTERVAL_SECS must be an integer")?,
+            None => 60,
+        };
+        if sync_interval_secs == 0 {
+            bail!("REEVE_SYNC_INTERVAL_SECS must be positive");
+        }
+        Ok(Some(FederationConfig {
+            upstream: raw.trim_end_matches('/').to_string(),
+            token,
+            site,
+            sync_interval_secs,
+        }))
+    }
+
+    /// Zot proxy backend (C11, docs/decisions/delivery.md D8). Fail
+    /// closed on misconfiguration at startup: creds without a URL,
+    /// half a credential pair, or a non-http scheme all refuse boot.
+    fn zot_from_lookup(get: &impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<ZotConfig>> {
+        let Some(raw) = get("REEVE_ZOT_URL") else {
+            if get("REEVE_ZOT_USERNAME").is_some() || get("REEVE_ZOT_PASSWORD").is_some() {
+                bail!("REEVE_ZOT_USERNAME/REEVE_ZOT_PASSWORD require REEVE_ZOT_URL");
+            }
+            return Ok(None);
+        };
+        let parsed = url::Url::parse(&raw)
+            .context("REEVE_ZOT_URL must be an absolute URL, e.g. http://127.0.0.1:5000")?;
+        if parsed.scheme() != "http" {
+            // The sidecar is co-located and accepts connections only
+            // from reeve-server (D8) — plain http keeps the proxy
+            // client boring (no TLS stack). https is a misconfig, not
+            // a degraded mode.
+            bail!(
+                "REEVE_ZOT_URL must be http:// (co-located sidecar, D8), got scheme {:?}",
+                parsed.scheme()
+            );
+        }
+        if parsed.host_str().is_none() {
+            bail!("REEVE_ZOT_URL must carry a host");
+        }
+        let username = get("REEVE_ZOT_USERNAME");
+        let password = get("REEVE_ZOT_PASSWORD");
+        if username.is_some() != password.is_some() {
+            bail!("REEVE_ZOT_USERNAME and REEVE_ZOT_PASSWORD must be set together");
+        }
+        Ok(Some(ZotConfig {
+            url: raw.trim_end_matches('/').to_string(),
+            username,
+            password,
+        }))
     }
 
     fn durability_from_lookup(
@@ -334,5 +516,103 @@ mod tests {
     #[test]
     fn bad_durability_tier_is_an_error() {
         assert!(cfg(&[("REEVE_DURABILITY", "litestream")]).is_err());
+    }
+
+    #[test]
+    fn zot_defaults_to_absent() {
+        assert!(cfg(&[]).unwrap().zot.is_none());
+    }
+
+    #[test]
+    fn zot_url_parses_and_normalizes() {
+        let c = cfg(&[("REEVE_ZOT_URL", "http://127.0.0.1:5000/")]).unwrap();
+        let zot = c.zot.expect("zot configured");
+        assert_eq!(zot.url, "http://127.0.0.1:5000");
+        assert!(zot.username.is_none() && zot.password.is_none());
+    }
+
+    #[test]
+    fn zot_env_credentials_parse() {
+        let c = cfg(&[
+            ("REEVE_ZOT_URL", "http://zot:5000"),
+            ("REEVE_ZOT_USERNAME", "reeve"),
+            ("REEVE_ZOT_PASSWORD", "hunter2"),
+        ])
+        .unwrap();
+        let zot = c.zot.unwrap();
+        assert_eq!(zot.username.as_deref(), Some("reeve"));
+        assert_eq!(zot.password.as_deref(), Some("hunter2"));
+    }
+
+    #[test]
+    fn federation_defaults_to_root() {
+        assert!(cfg(&[]).unwrap().federation.is_none());
+    }
+
+    #[test]
+    fn federation_gateway_parses() {
+        let c = cfg(&[
+            ("REEVE_UPSTREAM", "https://hub.example:8420/"),
+            ("REEVE_UPSTREAM_TOKEN", "rvt_deadbeef"),
+            ("REEVE_SITE", "plant-a"),
+            ("REEVE_SYNC_INTERVAL_SECS", "5"),
+        ])
+        .unwrap();
+        let f = c.federation.expect("gateway tier");
+        assert_eq!(f.upstream, "https://hub.example:8420");
+        assert_eq!(f.token, "rvt_deadbeef");
+        assert_eq!(f.site, "plant-a");
+        assert_eq!(f.sync_interval_secs, 5);
+    }
+
+    #[test]
+    fn federation_misconfigurations_refuse_startup() {
+        // Upstream without credential / site (§8.7 / §8.4).
+        assert!(cfg(&[("REEVE_UPSTREAM", "http://hub:8420")]).is_err());
+        assert!(
+            cfg(&[("REEVE_UPSTREAM", "http://hub:8420"), ("REEVE_UPSTREAM_TOKEN", "t")]).is_err()
+        );
+        // Credential without an upstream.
+        assert!(cfg(&[("REEVE_UPSTREAM_TOKEN", "t")]).is_err());
+        // Bad site label (spliced into layer paths).
+        assert!(
+            cfg(&[
+                ("REEVE_UPSTREAM", "http://hub:8420"),
+                ("REEVE_UPSTREAM_TOKEN", "t"),
+                ("REEVE_SITE", "../evil"),
+            ])
+            .is_err()
+        );
+        // Not a URL.
+        assert!(
+            cfg(&[
+                ("REEVE_UPSTREAM", "hub"),
+                ("REEVE_UPSTREAM_TOKEN", "t"),
+                ("REEVE_SITE", "plant-a"),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn install_open_defaults_closed() {
+        assert!(!cfg(&[]).unwrap().install_open);
+        assert!(cfg(&[("REEVE_INSTALL_OPEN", "true")]).unwrap().install_open);
+        assert!(!cfg(&[("REEVE_INSTALL_OPEN", "false")]).unwrap().install_open);
+        assert!(cfg(&[("REEVE_INSTALL_OPEN", "yes")]).is_err());
+    }
+
+    #[test]
+    fn zot_misconfigurations_refuse_startup() {
+        // Half a credential pair.
+        assert!(
+            cfg(&[("REEVE_ZOT_URL", "http://zot:5000"), ("REEVE_ZOT_USERNAME", "u")]).is_err()
+        );
+        // Creds without a backend.
+        assert!(cfg(&[("REEVE_ZOT_USERNAME", "u"), ("REEVE_ZOT_PASSWORD", "p")]).is_err());
+        // Non-http scheme (D8: co-located sidecar, boring client).
+        assert!(cfg(&[("REEVE_ZOT_URL", "https://zot:5000")]).is_err());
+        // Not a URL at all.
+        assert!(cfg(&[("REEVE_ZOT_URL", "zot:5000/nope nope")]).is_err());
     }
 }

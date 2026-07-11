@@ -93,6 +93,25 @@ pub fn build(state: AppState) -> Router {
             "/api/rollouts/{rollout_id}/abort",
             post(crate::ext::rollouts::abort_route),
         );
+    // Federation operator surface (C10, spec/reeve/06-federation.md
+    // §8.7): tier-token create (admin) / list (viewer+) / revoke
+    // (admin) — roles enforced in the handlers — plus the queryable
+    // sync status (§8.2).
+    #[cfg(feature = "ext-federation")]
+    let human = human
+        .route(
+            "/api/tier-tokens",
+            post(crate::ext::federation::create_token_route)
+                .get(crate::ext::federation::list_tokens_route),
+        )
+        .route(
+            "/api/tier-tokens/{name}",
+            delete(crate::ext::federation::revoke_token_route),
+        )
+        .route(
+            "/api/federation/status",
+            get(crate::ext::federation::status_route),
+        );
     // Live status stream (C8, spec/reeve/04-status-stream.md §6.1):
     // SSE, viewer+ (enforced in the handler), never unauthenticated —
     // inside the human_auth layer like every other human read.
@@ -153,6 +172,16 @@ pub fn build(state: AppState) -> Router {
         .route(
             "/v2/reeve/bundles/{device_id}/blobs/{digest}",
             get(delivery::v2_blob),
+        )
+        // C11 image proxy (docs/decisions/delivery.md D8): the
+        // catch-all leg of the ONE /v2 space — non-`reeve/*` repos
+        // reverse-proxy to the zot sidecar (pull only; push verbs
+        // 405 inside the handler). Behind the SAME device credential:
+        // the proxy terminates device auth and injects its own Basic
+        // credential toward zot (zot_proxy.rs).
+        .route(
+            "/v2/{*rest}",
+            axum::routing::any(crate::zot_proxy::proxy_route),
         );
     // Secrets resolve endpoint (C7, spec/reeve/10-secrets.md §12.3):
     // the single plaintext egress, behind the same device credential —
@@ -174,14 +203,58 @@ pub fn build(state: AppState) -> Router {
         SqliteEnrollmentService::new(state.db.clone(), state.revisions.clone()),
     );
 
-    Router::new()
-        .merge(human)
-        .merge(device)
+    // Tier-to-tier sync serving (C10, spec/reeve/06-federation.md §8.2
+    // parent side): what a CHILD gateway calls with its tier credential
+    // (the TierIdentity extractor authenticates and scopes every
+    // handler, §8.7). Not device- or human-auth'd — a tier token is its
+    // own principal. Agents never touch these routes (§8.6).
+    #[cfg(feature = "ext-federation")]
+    let tier = {
+        let tier = Router::new()
+            .route(
+                "/api/reeve/v1/sync/head",
+                get(crate::ext::federation::sync_head_route),
+            )
+            .route(
+                "/api/reeve/v1/sync/revisions",
+                get(crate::ext::federation::sync_revisions_route),
+            )
+            .route(
+                "/api/reeve/v1/sync/blobs/{digest}",
+                get(crate::ext::federation::sync_blob_route),
+            )
+            .route(
+                "/api/reeve/v1/sync/journal/{device_id}",
+                post(crate::ext::federation::sync_journal_route),
+            );
+        // Scoped secret sync (10-secrets §12.5) needs the vault.
+        #[cfg(feature = "ext-secrets")]
+        let tier = tier.route(
+            "/api/reeve/v1/sync/secrets",
+            get(crate::ext::federation::sync_secrets_route),
+        );
+        tier
+    };
+
+    let app = Router::new().merge(human).merge(device);
+    #[cfg(feature = "ext-federation")]
+    let app = app.merge(tier);
+    app
         // Operational contract (CLAUDE.md): /healthz, no auth.
         .route("/healthz", get(healthz))
+        // Embedded API document (C12, spec/reeve/08-packaging.md
+        // §10.1: openapi.json "served at a stable path"). 404 until
+        // Track D generates one (embed-if-present, build.rs). Shape,
+        // not values — outside auth like /healthz.
+        .route("/api/openapi.json", get(crate::assets::openapi))
         .with_state(state)
         .merge(device_api::enroll::router(enroll_svc))
         .merge(status)
+        // Embedded UI (C12/§10.1, CLAUDE.md "ui/"): asset by path,
+        // index.html for SPA deep links; /api/* and /v2/* misses stay
+        // real 404s. Pre-Track-D builds embed nothing => 404 (same as
+        // before this fallback existed).
+        .fallback(crate::assets::spa_fallback)
 }
 
 async fn healthz() -> Json<serde_json::Value> {

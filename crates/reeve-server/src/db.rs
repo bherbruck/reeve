@@ -88,6 +88,16 @@ const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "rollouts",
         sql: include_str!("migrations/V8__rollouts.sql"),
     },
+    // Federation tier state exists regardless of ext-federation (same
+    // rule as V6/V7/V8): the CORE tree write gate consults tier_tokens
+    // (spec/reeve/06-federation.md §8.4 delegated-layer refusal), and
+    // the core render pipeline reads devices.tier_origin and
+    // device_manifests.rendered_upstream.
+    EmbeddedMigration {
+        version: 9,
+        name: "federation",
+        sql: include_str!("migrations/V9__federation.sql"),
+    },
 ];
 
 /// Open the server DB with the D6 pragmas. Idempotent.

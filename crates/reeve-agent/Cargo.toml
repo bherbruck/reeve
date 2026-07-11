@@ -71,6 +71,10 @@ portable-pty = { version = "=0.9.0", optional = true }
 libc = { version = "=0.2.186" }
 # B7 clock skew (ext-health only): RFC 7231 Date header parsing.
 httpdate = { version = "=1.0.3", optional = true }
+# C12 packaging (spec/reeve/08-packaging.md §10.1): the binary embeds
+# spec/reeve/ for --spec — the deployed artifact carries its own
+# contract.
+rust-embed = { workspace = true }
 
 [dev-dependencies]
 # "ws" for the mock channel server in ext::channel tests (B5);

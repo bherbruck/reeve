@@ -34,6 +34,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use device_api::{Identity, Role};
 use revision_store::{Revision, RevisionId, RevisionStore, Stream};
+use rusqlite::OptionalExtension as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::warn;
@@ -194,6 +195,84 @@ fn store_err(e: revision_store::Error) -> Response {
     }
 }
 
+/// The OTHER half of §8.4's single-writer rule, enforced at the PARENT
+/// (spec/reeve/06-federation.md §8.4: "the root does not edit site
+/// layers owned by gateways"): a tree path is refused when it falls
+/// under a layer delegated to a child tier — the `20-site.<site>`
+/// family of any active tier token, or the device layer of a device
+/// that reached us via forwarded ingest (`devices.tier_origin`,
+/// §8.3). CORE, not ext-federation: the V9 tables exist regardless
+/// (db.rs), so a --no-default-features binary keeps refusing writes it
+/// does not own. Returns the owning child's name.
+fn delegated_to(conn: &rusqlite::Connection, tree_path: &str) -> rusqlite::Result<Option<String>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT name, site FROM tier_tokens
+         WHERE revoked_at IS NULL
+           AND (expires_at IS NULL OR expires_at > ?1)",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![crate::db::now_secs()], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (name, site) = row?;
+        // Site layers are `NN-site.<label>` by D11 convention; match
+        // any numeric prefix so renumbering does not open a hole.
+        if let Some(rest) = tree_path.strip_prefix("layers/")
+            && let Some(dash) = rest.find('-')
+            && rest[..dash].bytes().all(|b| b.is_ascii_digit())
+            && crate::ownership::prefix_matches(
+                &format!("site.{site}"),
+                rest[dash + 1..].split('/').next().unwrap_or(""),
+            )
+        {
+            return Ok(Some(name));
+        }
+    }
+    // Device layers of forwarded devices (enrolled at a child tier).
+    if let Some(rest) = tree_path.strip_prefix("layers/")
+        && let Some(dev) = rest.split('/').next().and_then(|l| {
+            l.split_once('-')
+                .and_then(|(n, label)| {
+                    (n.bytes().all(|b| b.is_ascii_digit())).then_some(label)
+                })
+                .and_then(|label| label.strip_prefix("device."))
+        })
+    {
+        let origin: Option<Option<String>> = conn
+            .query_row(
+                "SELECT tier_origin FROM devices WHERE device_id = ?1",
+                rusqlite::params![dev],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(Some(origin)) = origin {
+            return Ok(Some(origin));
+        }
+    }
+    Ok(None)
+}
+
+/// 403 when `tree_path` belongs to a child tier (see [`delegated_to`]).
+fn check_not_delegated(state: &AppState, tree_path: &str) -> Result<(), Box<Response>> {
+    let conn = state.db.lock().expect("db mutex poisoned");
+    match delegated_to(&conn, tree_path) {
+        Ok(None) => Ok(()),
+        Ok(Some(child)) => Err(Box::new(
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": format!(
+                        "`{tree_path}` is owned by child tier `{child}` \
+                         (single writer per layer, federation §8.4)"
+                    )
+                })),
+            )
+                .into_response(),
+        )),
+        Err(e) => Err(Box::new(internal(e))),
+    }
+}
+
 fn author_of(identity: &Identity) -> String {
     match identity {
         Identity::Human { user, .. } => user.clone(),
@@ -278,6 +357,11 @@ pub async fn put_layer(
         )
             .into_response();
     }
+    // §8.4 the other direction: this tier must not edit layers it
+    // delegated to a child tier.
+    if let Err(resp) = check_not_delegated(&state, &tree_path) {
+        return *resp;
+    }
 
     let prefix = format!("{tree_path}/");
     let files = match decode_files(&prefix, &body.files) {
@@ -338,6 +422,9 @@ pub async fn put_package(
             Json(json!({ "error": refusal.to_string() })),
         )
             .into_response();
+    }
+    if let Err(resp) = check_not_delegated(&state, &tree_path) {
+        return *resp;
     }
 
     let prefix = format!("{tree_path}/");

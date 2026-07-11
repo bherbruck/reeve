@@ -1,0 +1,106 @@
+# deploy/ci/build-matrix.yml — EXAMPLE ONLY (not wired to any CI
+# service). The musl build/embed/release recipe for reeve's static
+# binaries (spec/reeve/08-packaging.md §10.1, §10.6: deploy/ holds CI
+# examples — things the binaries cannot emit about themselves).
+#
+# Shape is GitHub-Actions-flavored YAML; translate freely. The
+# load-bearing content is the step sequence:
+#
+#   1. build reeve-agent for both musl targets
+#   2. build the UI once (ui/dist), generate openapi.json
+#   3. build reeve-server for both musl targets with the agent
+#      binaries from step 1 handed to build.rs via
+#      REEVE_AGENT_BINARIES (--features embedded-agents), so the
+#      served /install artifacts are version-coherent with the
+#      serving server (§10.4: same workspace revision, asserted at
+#      build via the GIT_HASH file).
+#   4. keep deploy/compose.yml and `reeve-server init` in sync
+#      (§10.6's one named exception) — the workspace test
+#      packaging_flow.rs::init_compose_matches_canonical does the
+#      comparison; CI just runs it.
+
+name: release-matrix (example)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  agent:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+            cc-setup: sudo apt-get update && sudo apt-get install -y musl-tools
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64
+            # aarch64 musl cross toolchain (musl.cc); matches
+            # .cargo/config.toml's linker/CC for this target.
+            cc-setup: |
+              curl -fsSL https://musl.cc/aarch64-linux-musl-cross.tgz | tar -xz -C "$HOME"
+              echo "$HOME/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - run: ${{ matrix.cc-setup }}
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo build --release -p reeve-agent --target ${{ matrix.target }}
+      # Collect under the names reeve-server's build.rs looks for in
+      # REEVE_AGENT_BINARIES: reeve-agent-<arch> + a GIT_HASH file
+      # for the §10.4 version-coherence assert.
+      - run: |
+          mkdir -p agent-binaries
+          cp target/${{ matrix.target }}/release/reeve-agent \
+             agent-binaries/reeve-agent-${{ matrix.arch }}
+          git rev-parse HEAD > agent-binaries/GIT_HASH
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.arch }}
+          path: agent-binaries/
+
+  server:
+    needs: agent
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            cc-setup: sudo apt-get update && sudo apt-get install -y musl-tools
+          - target: aarch64-unknown-linux-musl
+            cc-setup: |
+              curl -fsSL https://musl.cc/aarch64-linux-musl-cross.tgz | tar -xz -C "$HOME"
+              echo "$HOME/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - run: ${{ matrix.cc-setup }}
+      - run: rustup target add ${{ matrix.target }}
+      # UI dist + openapi.json embed (build.rs embeds-if-present;
+      # spec/reeve/ is always embedded for --spec).
+      - run: cd ui && npm ci && npm run build
+      # Both arch agent binaries into ONE server binary (§10.4:
+      # /install serves both; the script picks by uname -m).
+      - uses: actions/download-artifact@v4
+        with: { pattern: "agent-*", path: agent-binaries, merge-multiple: true }
+      - run: |
+          REEVE_AGENT_BINARIES="$PWD/agent-binaries" \
+          cargo build --release -p reeve-server \
+            --features embedded-agents --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reeve-server-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/reeve-server
+
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      # Workspace tests include the packaging suite: --spec output,
+      # init idempotency, compose canonical-file sync, /install
+      # presence/absence per feature.
+      - run: cargo test --workspace
+      - run: cargo test -p reeve-server --features embedded-agents
+      # Conformance: additivity proof (docs/build-charter.md E2).
+      - run: cargo test -p reeve-server --no-default-features

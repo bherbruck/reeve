@@ -76,7 +76,7 @@ pub const BINARY_PREFIX: &str = "reeve-agent-";
 /// ```yaml
 /// version: "0.2.0"
 /// binary:
-///   url: /v2/reeve/reeve-agent-x86_64/blobs/sha256:<hex>
+///   url: /v2/reeve/agent/x86_64/blobs/sha256:<hex>
 ///   digest: sha256:<hex>
 ///   sizeBytes: 12345678   # advisory; digest is the integrity check
 /// ```

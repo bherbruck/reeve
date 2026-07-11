@@ -264,12 +264,20 @@ fn app_entries(
         .collect()
 }
 
-/// Render one device against an already-loaded tree, inside the given
-/// connection. One transaction per updated device (Law 3).
+/// The upstream-stream head a render pass merges under the local tree
+/// (spec/reeve/06-federation.md §8.2 two-stream render input):
+/// `(local row id, parent-tier origin id)`. `None` on a root with no
+/// synced revisions.
+pub type UpstreamHead = Option<(RevisionId, RevisionId)>;
+
+/// Render one device against an already-loaded MERGED tree (upstream
+/// layers under local ones, §8.2), inside the given connection. One
+/// transaction per updated device (Law 3).
 fn render_one(
     conn: &mut Connection,
     tree: &FileSet,
     head: RevisionId,
+    upstream: UpstreamHead,
     epoch: u16,
     registry_endpoint: &str,
     dev: &DeviceRow,
@@ -286,6 +294,7 @@ fn render_one(
         Some((c, g, d, s, _)) => (*c, *g, Some(d.as_str()), s.clone()),
         None => (0, 0, None, None),
     };
+    let upstream_row = upstream.map(|(row, _)| row);
 
     let ctx = RenderContext {
         device_id: dev.device_id.clone(),
@@ -293,7 +302,10 @@ fn render_one(
         registry_endpoint: registry_endpoint.to_string(),
         generation: (generation + 1) as u64,
         local_revision: head.max(0) as u64,
-        hub_revision: None,
+        // manifest.yaml records BOTH revision ids (D2/§8.2); the hub id
+        // is the PARENT tier's own revision id (origin), so provenance
+        // reads the same at every tier.
+        hub_revision: upstream.map(|(_, origin)| origin.max(0) as u64),
     };
     let out = match desired_state::render(tree, &ctx) {
         Ok(o) => o,
@@ -332,9 +344,9 @@ fn render_one(
         // only the revision bookkeeping so this pass isn't repeated.
         conn.execute(
             "UPDATE device_manifests
-             SET rendered_revision = ?2, updated_at = ?3
+             SET rendered_revision = ?2, rendered_upstream = ?3, updated_at = ?4
              WHERE device_id = ?1",
-            params![dev.device_id, head, now_secs()],
+            params![dev.device_id, head, upstream_row, now_secs()],
         )?;
         return Ok(Outcome::Unchanged);
     }
@@ -366,7 +378,7 @@ fn render_one(
             "UPDATE device_manifests
              SET manifest_version = ?2, counter = ?3, secrets_digest = ?4,
                  manifest_json = ?5, etag = ?6, rendered_revision = ?7,
-                 updated_at = ?8
+                 rendered_upstream = ?8, updated_at = ?9
              WHERE device_id = ?1",
             params![
                 dev.device_id,
@@ -376,6 +388,7 @@ fn render_one(
                 String::from_utf8(manifest_json).expect("serde_json emits UTF-8"),
                 etag,
                 head,
+                upstream_row,
                 now_secs(),
             ],
         )?;
@@ -445,8 +458,8 @@ fn render_one(
         "INSERT INTO device_manifests
              (device_id, manifest_version, counter, generation, content_digest,
               secrets_digest, bundle_digest, layer_digest, manifest_json, etag,
-              rendered_revision, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+              rendered_revision, rendered_upstream, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT(device_id) DO UPDATE SET
              manifest_version = excluded.manifest_version,
              counter = excluded.counter,
@@ -458,6 +471,7 @@ fn render_one(
              manifest_json = excluded.manifest_json,
              etag = excluded.etag,
              rendered_revision = excluded.rendered_revision,
+             rendered_upstream = excluded.rendered_upstream,
              updated_at = excluded.updated_at",
         params![
             dev.device_id,
@@ -471,6 +485,7 @@ fn render_one(
             String::from_utf8(manifest_json).expect("serde_json emits UTF-8"),
             etag,
             head,
+            upstream_row,
             now,
         ],
     )?;
@@ -478,9 +493,14 @@ fn render_one(
     Ok(Outcome::Updated(version))
 }
 
+/// Render-eligible device row: locally-enrolled only. Devices that
+/// appeared via forwarded status ingest (`tier_origin` set — federation
+/// §8.3) converge against THEIR OWN tier and are never rendered or
+/// served desired state here (§8.6: an agent has exactly one server).
 fn device_row(conn: &Connection, device_id: &str) -> Result<Option<DeviceRow>, rusqlite::Error> {
     conn.query_row(
-        "SELECT device_id, class, region, site FROM devices WHERE device_id = ?1",
+        "SELECT device_id, class, region, site FROM devices
+         WHERE device_id = ?1 AND tier_origin IS NULL",
         params![device_id],
         |r| {
             Ok(DeviceRow {
@@ -525,24 +545,51 @@ fn tree_at_revision(
     load_tree(store, (revision > 0).then_some(revision))
 }
 
-/// Read the local head + the trees a pass needs (head plus every
-/// distinct pinned revision) under the revisions lock, releasing it
-/// before any DB work (locks are short, never held together longer
-/// than needed).
+/// Merge the upstream tree under a local tree
+/// (spec/reeve/06-federation.md §8.2 render input): layers are
+/// path-ordered, so the union IS the single merged tree view — the
+/// upstream stream provides hub-owned layers (fleet/class/region),
+/// the local stream this tier's own (site/device). Overlapping paths
+/// are impossible by ownership (§8.4); if one appears anyway (storage
+/// corruption, misbehaving parent) the LOCAL side wins and we warn —
+/// visible, never silent.
+fn merge_streams(upstream: &FileSet, local: FileSet) -> FileSet {
+    let mut merged = upstream.clone();
+    for (path, bytes) in local {
+        if merged.contains_key(&path) {
+            warn!(%path, "path present in BOTH streams — ownership violation (federation §8.4); local wins");
+        }
+        merged.insert(path, bytes);
+    }
+    merged
+}
+
+/// Read both stream heads + the MERGED trees a pass needs (local head
+/// plus every distinct pinned revision, each merged over the upstream
+/// head — §8.2) under the revisions lock, releasing it before any DB
+/// work (locks are short, never held together longer than needed).
 fn snapshot_trees(
     state: &AppState,
     targets: &BTreeMap<String, RevisionId>,
-) -> Result<(RevisionId, BTreeMap<RevisionId, FileSet>), PipelineError> {
+) -> Result<(RevisionId, UpstreamHead, BTreeMap<RevisionId, FileSet>), PipelineError> {
     let store = state.revisions.lock().expect("revisions mutex poisoned");
     let head = store.head(Stream::Local)?.unwrap_or(0);
+    let upstream = store.origin_head(Stream::Upstream)?;
+    let upstream_tree = match upstream {
+        Some((row, _)) => tree_at_revision(&store, row)?,
+        None => FileSet::new(),
+    };
     let mut trees = BTreeMap::new();
-    trees.insert(head, tree_at_revision(&store, head)?);
+    trees.insert(head, merge_streams(&upstream_tree, tree_at_revision(&store, head)?));
     for revision in targets.values() {
         if !trees.contains_key(revision) {
-            trees.insert(*revision, tree_at_revision(&store, *revision)?);
+            trees.insert(
+                *revision,
+                merge_streams(&upstream_tree, tree_at_revision(&store, *revision)?),
+            );
         }
     }
-    Ok((head, trees))
+    Ok((head, upstream, trees))
 }
 
 /// Render every enrolled device against the current local head. Called
@@ -561,13 +608,16 @@ pub fn render_all(state: &AppState) -> Result<RenderReport, PipelineError> {
         let conn = state.db.lock().expect("db mutex poisoned");
         all_targets(&conn)?
     };
-    let (head, trees) = snapshot_trees(state, &targets)?;
+    let (head, upstream, trees) = snapshot_trees(state, &targets)?;
 
     let mut conn = state.db.lock().expect("db mutex poisoned");
     let epoch = server_epoch(&conn)?;
     let devices: Vec<DeviceRow> = {
+        // tier_origin IS NULL: forwarded devices are status-only here
+        // (federation §8.3/§8.6) — see device_row.
         let mut stmt =
-            conn.prepare("SELECT device_id, class, region, site FROM devices ORDER BY device_id")?;
+            conn.prepare("SELECT device_id, class, region, site FROM devices
+                          WHERE tier_origin IS NULL ORDER BY device_id")?;
         let rows = stmt.query_map([], |r| {
             Ok(DeviceRow {
                 device_id: r.get(0)?,
@@ -589,7 +639,7 @@ pub fn render_all(state: &AppState) -> Result<RenderReport, PipelineError> {
         let tree = trees
             .get(&effective)
             .expect("snapshot_trees loaded every effective revision");
-        match render_one(&mut conn, tree, effective, epoch, &state.cfg.registry_endpoint, dev)? {
+        match render_one(&mut conn, tree, effective, upstream, epoch, &state.cfg.registry_endpoint, dev)? {
             Outcome::Unchanged => report.unchanged += 1,
             Outcome::Updated(_) => {
                 report.rendered += 1;
@@ -606,6 +656,14 @@ pub fn render_all(state: &AppState) -> Result<RenderReport, PipelineError> {
         "INSERT INTO settings (key, value) VALUES ('last_rendered_local', ?1)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![head.to_string()],
+    )?;
+    // Two-stream bookkeeping (§8.2): reconcile compares this against
+    // the upstream head, so a sync appended-then-killed before its
+    // render pass is healed at startup exactly like a local commit.
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('last_rendered_upstream', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![upstream.map(|(row, _)| row).unwrap_or(0).to_string()],
     )?;
     // Out-of-band inputs written before this pass took the db lock were
     // visible to every render above; later writers re-set the flag and
@@ -648,24 +706,30 @@ pub fn render_all_logged(state: &AppState) {
 /// pass this device missed (crash, earlier per-device failure).
 pub fn ensure_current(state: &AppState, device_id: &str) -> Result<Outcome, PipelineError> {
     // Effective revision = the device's pinned target (§11.2 rollout
-    // hold) or the local head. Cheap check first: row already there?
-    // Lock order everywhere in this module: revisions BEFORE db, never
-    // held together.
-    let head = {
+    // hold) or the local head; upstream head joins the change check
+    // (§8.2: a synced upstream revision must re-render too). Cheap
+    // check first: row already there? Lock order everywhere in this
+    // module: revisions BEFORE db, never held together.
+    let (head, upstream) = {
         let store = state.revisions.lock().expect("revisions mutex poisoned");
-        store.head(Stream::Local)?.unwrap_or(0)
+        (
+            store.head(Stream::Local)?.unwrap_or(0),
+            store.origin_head(Stream::Upstream)?,
+        )
     };
+    let upstream_row = upstream.map(|(row, _)| row);
     let effective = {
         let conn = state.db.lock().expect("db mutex poisoned");
         let effective = device_target(&conn, device_id)?.unwrap_or(head);
-        let at: Option<i64> = conn
+        let at: Option<(i64, Option<i64>)> = conn
             .query_row(
-                "SELECT rendered_revision FROM device_manifests WHERE device_id = ?1",
+                "SELECT rendered_revision, rendered_upstream
+                 FROM device_manifests WHERE device_id = ?1",
                 params![device_id],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
-        if at == Some(effective) {
+        if at == Some((effective, upstream_row)) {
             return Ok(Outcome::Unchanged);
         }
         effective
@@ -673,13 +737,17 @@ pub fn ensure_current(state: &AppState, device_id: &str) -> Result<Outcome, Pipe
 
     let tree = {
         let store = state.revisions.lock().expect("revisions mutex poisoned");
-        tree_at_revision(&store, effective)?
+        let upstream_tree = match upstream {
+            Some((row, _)) => tree_at_revision(&store, row)?,
+            None => FileSet::new(),
+        };
+        merge_streams(&upstream_tree, tree_at_revision(&store, effective)?)
     };
     let mut conn = state.db.lock().expect("db mutex poisoned");
     let epoch = server_epoch(&conn)?;
     let dev = device_row(&conn, device_id)?
         .ok_or_else(|| PipelineError::UnknownDevice(device_id.to_string()))?;
-    render_one(&mut conn, &tree, effective, epoch, &state.cfg.registry_endpoint, &dev)
+    render_one(&mut conn, &tree, effective, upstream, epoch, &state.cfg.registry_endpoint, &dev)
 }
 
 /// Render `device_id` at `revision` PURELY (no writes, no manifest
@@ -697,9 +765,17 @@ pub fn probe_content_digest(
     device_id: &str,
     revision: RevisionId,
 ) -> Result<Option<String>, PipelineError> {
-    let tree = {
+    let (tree, upstream) = {
         let store = state.revisions.lock().expect("revisions mutex poisoned");
-        tree_at_revision(&store, revision)?
+        let upstream = store.origin_head(Stream::Upstream)?;
+        let upstream_tree = match upstream {
+            Some((row, _)) => tree_at_revision(&store, row)?,
+            None => FileSet::new(),
+        };
+        (
+            merge_streams(&upstream_tree, tree_at_revision(&store, revision)?),
+            upstream,
+        )
     };
     let dev = {
         let conn = state.db.lock().expect("db mutex poisoned");
@@ -712,7 +788,7 @@ pub fn probe_content_digest(
         registry_endpoint: state.cfg.registry_endpoint.clone(),
         generation: 0,
         local_revision: revision.max(0) as u64,
-        hub_revision: None,
+        hub_revision: upstream.map(|(_, origin)| origin.max(0) as u64),
     };
     Ok(desired_state::render(&tree, &ctx)
         .ok()
@@ -729,26 +805,34 @@ pub fn probe_content_digest(
 ///    renders leave orphans only until the next startup).
 pub fn reconcile(state: &AppState) -> Result<(), PipelineError> {
     let needs_pass = {
-        let head = {
+        let (head, upstream_row) = {
             let store = state.revisions.lock().expect("revisions mutex poisoned");
-            store.head(Stream::Local)?.unwrap_or(0)
+            (
+                store.head(Stream::Local)?.unwrap_or(0),
+                store
+                    .origin_head(Stream::Upstream)?
+                    .map(|(row, _)| row)
+                    .unwrap_or(0),
+            )
         };
         let conn = state.db.lock().expect("db mutex poisoned");
-        let last: Option<String> = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = 'last_rendered_local'",
-                [],
-                |r| r.get(0),
-            )
-            .optional()?;
-        let dirty: Option<String> = conn
-            .query_row(
+        let setting = |key: &str| -> Result<Option<String>, rusqlite::Error> {
+            conn.query_row(
                 "SELECT value FROM settings WHERE key = ?1",
-                params![RENDER_DIRTY_KEY],
+                params![key],
                 |r| r.get(0),
             )
-            .optional()?;
-        dirty.is_some() || last.and_then(|s| s.parse::<i64>().ok()) != Some(head)
+            .optional()
+        };
+        let last = setting("last_rendered_local")?;
+        // §8.2: an upstream revision synced but not yet rendered (kill
+        // -9 between append and pass) is recovered here, like a local
+        // commit. Absent key (pre-federation DB) reads as 0.
+        let last_upstream = setting("last_rendered_upstream")?;
+        let dirty = setting(RENDER_DIRTY_KEY)?;
+        dirty.is_some()
+            || last.and_then(|s| s.parse::<i64>().ok()) != Some(head)
+            || last_upstream.and_then(|s| s.parse::<i64>().ok()).unwrap_or(0) != upstream_row
     };
     if needs_pass {
         let report = render_all(state)?;

@@ -172,6 +172,27 @@ pub struct SecretRotationEvent {
     pub state: SecretRotationState,
 }
 
+/// Federation sync outcome (`federation-sync` payload;
+/// spec/reeve/06-federation.md §8.2 — sync state is queryable AND
+/// evented; an id/digest divergence is surfaced here too, never
+/// auto-resolved). Additive to the rev-003/1 table: unknown event
+/// types are ignored by older clients (§6.3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FederationSyncEvent {
+    pub ts: String,
+    /// The parent tier URL this gateway syncs from.
+    pub upstream: String,
+    pub ok: bool,
+    /// Parent-tier revision id of the synced upstream head, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_head: Option<u64>,
+    /// Revisions appended by this tick.
+    pub appended: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// One SSE event: the pair of wire event name (`event:` field) and
 /// typed JSON payload (`data:` field) — the complete rev-003/1 table
 /// (spec/reeve/04-status-stream.md §6.3).
@@ -186,6 +207,7 @@ pub enum SseEvent {
     DurabilityLag(DurabilityLagEvent),
     Rollout(RolloutEvent),
     SecretRotation(SecretRotationEvent),
+    FederationSync(FederationSyncEvent),
 }
 
 /// Wire event names (spec/reeve/04-status-stream.md §6.3 table).
@@ -199,6 +221,7 @@ pub mod event_type {
     pub const DURABILITY_LAG: &str = "durability-lag";
     pub const ROLLOUT: &str = "rollout";
     pub const SECRET_ROTATION: &str = "secret-rotation";
+    pub const FEDERATION_SYNC: &str = "federation-sync";
 }
 
 impl SseEvent {
@@ -214,6 +237,7 @@ impl SseEvent {
             SseEvent::DurabilityLag(_) => event_type::DURABILITY_LAG,
             SseEvent::Rollout(_) => event_type::ROLLOUT,
             SseEvent::SecretRotation(_) => event_type::SECRET_ROTATION,
+            SseEvent::FederationSync(_) => event_type::FEDERATION_SYNC,
         }
     }
 
@@ -229,6 +253,7 @@ impl SseEvent {
             SseEvent::DurabilityLag(p) => serde_json::to_string(p),
             SseEvent::Rollout(p) => serde_json::to_string(p),
             SseEvent::SecretRotation(p) => serde_json::to_string(p),
+            SseEvent::FederationSync(p) => serde_json::to_string(p),
         }
     }
 
@@ -246,6 +271,7 @@ impl SseEvent {
             event_type::DURABILITY_LAG => SseEvent::DurabilityLag(serde_json::from_str(data)?),
             event_type::ROLLOUT => SseEvent::Rollout(serde_json::from_str(data)?),
             event_type::SECRET_ROTATION => SseEvent::SecretRotation(serde_json::from_str(data)?),
+            event_type::FEDERATION_SYNC => SseEvent::FederationSync(serde_json::from_str(data)?),
             _ => return Ok(None),
         }))
     }

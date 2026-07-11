@@ -28,3 +28,7 @@ tracing-subscriber = "0.3"
 # Durability tier target (spec/reeve/07-durability.md §9.2): one crate,
 # S3-compatible + local filesystem (test/air-gap) targets.
 object_store = { version = "0.12", features = ["aws"] }
+# C12 packaging (spec/reeve/08-packaging.md §10.1): both binaries embed
+# spec/reeve/ for --spec; reeve-server additionally embeds ui/dist.
+# include-exclude: filter the embed to *.md / real assets.
+rust-embed = { version = "8", features = ["include-exclude"] }

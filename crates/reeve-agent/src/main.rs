@@ -296,6 +296,43 @@ async fn main() -> anyhow::Result<()> {
     // Subcommand dispatch (minimal, no CLI framework): `enroll` runs
     // the D4 ceremony and exits; no subcommand runs the poll loop.
     let mut args = std::env::args().skip(1).peekable();
+    // C12 packaging surfaces (spec/reeve/08-packaging.md §10.1).
+    match args.peek().map(String::as_str) {
+        Some("--version" | "-V") => {
+            // §10.1: version output MUST include the workspace git
+            // revision (build.rs GIT_HASH; "unknown" without a repo).
+            println!(
+                "reeve-agent {} (git {})",
+                env!("CARGO_PKG_VERSION"),
+                env!("GIT_HASH")
+            );
+            return Ok(());
+        }
+        Some("--spec") => {
+            args.next();
+            match reeve_agent::specdocs::render(args.next().as_deref()) {
+                Ok(text) => {
+                    print!("{text}");
+                    return Ok(());
+                }
+                Err(e) => anyhow::bail!(e),
+            }
+        }
+        Some("--completions") => {
+            args.next();
+            let Some(shell) = args.next() else {
+                anyhow::bail!("usage: reeve-agent --completions <bash|zsh|fish>");
+            };
+            match reeve_agent::completions::script(&shell) {
+                Ok(s) => {
+                    print!("{s}");
+                    return Ok(());
+                }
+                Err(e) => anyhow::bail!(e),
+            }
+        }
+        _ => {}
+    }
     if args.peek().map(String::as_str) == Some("enroll") {
         args.next();
         let opts = reeve_agent::enroll::parse_enroll_args(args)
@@ -327,7 +364,7 @@ async fn main() -> anyhow::Result<()> {
     }
     if let Some(other) = args.peek() {
         anyhow::bail!(
-            "unknown subcommand {other:?}\nusage: reeve-agent [enroll --server <URL> --token <JOIN_TOKEN> | install [--server <URL> --token <JOIN_TOKEN>] | uninstall [--purge] | rollback]"
+            "unknown subcommand {other:?}\nusage: reeve-agent [enroll --server <URL> --token <JOIN_TOKEN> | install [--server <URL> --token <JOIN_TOKEN>] | uninstall [--purge] | rollback | --version | --spec [name] | --completions <shell>]"
         );
     }
 

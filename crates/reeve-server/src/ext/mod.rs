@@ -5,6 +5,13 @@
 
 #[cfg(feature = "ext-channel")]
 pub mod channel;
+#[cfg(feature = "ext-federation")]
+pub mod federation;
+// C12 §10.4 /install bootstrap: named without the ext- prefix because
+// spec/reeve/08-packaging.md §10.4 and the build charter name the
+// feature `embedded-agents` verbatim; boundary rules are identical.
+#[cfg(feature = "embedded-agents")]
+pub mod install;
 #[cfg(feature = "ext-rollouts")]
 pub mod rollouts;
 #[cfg(feature = "ext-secrets")]

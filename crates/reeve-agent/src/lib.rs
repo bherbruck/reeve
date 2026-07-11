@@ -15,6 +15,7 @@
 //!   §3.2/§3.3; enrollment/config shape from docs/decisions/agent.md.
 
 pub mod bundle;
+pub mod completions;
 pub mod config;
 pub mod converge;
 pub mod enroll;
@@ -24,6 +25,7 @@ pub mod poll;
 pub mod provider;
 pub mod report;
 pub mod source;
+pub mod specdocs;
 pub mod state;
 pub mod systemd;
 pub mod update;

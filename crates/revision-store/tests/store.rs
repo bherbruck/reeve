@@ -237,3 +237,123 @@ fn from_connection_owns_and_initializes() {
         .unwrap();
     assert_eq!(store.head(revision_store::Stream::Local).unwrap(), Some(id));
 }
+
+// ------------------------------------------------------------ verbatim
+// Federation §8.2 verbatim append (C10): parent revision ids, parents,
+// authorship and timestamps preserved; idempotent; divergence errors;
+// closure enforced.
+
+mod verbatim {
+    use super::*;
+    use revision_store::{VerbatimOutcome, VerbatimRevision};
+    use std::collections::BTreeMap;
+
+    fn vrev(origin: i64, parent: Option<i64>, files: &[(&str, &[u8])]) -> (VerbatimRevision, Vec<(String, Vec<u8>)>) {
+        let blobs: Vec<(String, Vec<u8>)> = files
+            .iter()
+            .map(|(_, c)| (digest_of(c), c.to_vec()))
+            .collect();
+        let rev = VerbatimRevision {
+            origin_id: origin,
+            origin_parent: parent,
+            author: "hub-op".into(),
+            message: format!("hub revision {origin}"),
+            created_at: "2026-07-01T00:00:00.000Z".into(),
+            files: files
+                .iter()
+                .map(|(p, c)| (p.to_string(), digest_of(c)))
+                .collect::<BTreeMap<_, _>>(),
+        };
+        (rev, blobs)
+    }
+
+    fn append(s: &mut RevisionStore, rev: &VerbatimRevision, blobs: &[(String, Vec<u8>)]) -> Result<VerbatimOutcome, Error> {
+        for (digest, content) in blobs {
+            s.put_blob(digest, content).unwrap();
+        }
+        s.append_verbatim(Stream::Upstream, rev)
+    }
+
+    #[test]
+    fn verbatim_append_preserves_origin_identity_and_is_idempotent() {
+        let (_dir, mut s) = store();
+        // Local stream burns some ids first, so origin ids and local
+        // row ids DIVERGE — the side table is what keeps them apart.
+        s.commit([("l.txt", b"x".as_slice())], "op", "local", Stream::Local).unwrap();
+
+        let (r10, b10) = vrev(10, None, &[("layers/00-fleet/a.txt", b"alpha")]);
+        let out = append(&mut s, &r10, &b10).unwrap();
+        let VerbatimOutcome::Appended(local_id) = out else { panic!("first append") };
+        assert_ne!(local_id, 10, "local row id space is the store's own");
+        assert_eq!(s.origin_of(local_id).unwrap(), Some(10));
+        assert_eq!(s.origin_head(Stream::Upstream).unwrap(), Some((local_id, 10)));
+
+        // Verbatim metadata preserved.
+        let rev = s.revision(local_id).unwrap();
+        assert_eq!(rev.author, "hub-op");
+        assert_eq!(rev.created_at, "2026-07-01T00:00:00.000Z");
+        assert_eq!(rev.stream, Stream::Upstream);
+
+        // Idempotent re-append (re-sync / re-import, Law 3).
+        assert_eq!(
+            append(&mut s, &r10, &b10).unwrap(),
+            VerbatimOutcome::AlreadyPresent(local_id)
+        );
+
+        // Chain continues by ORIGIN ids.
+        let (r11, b11) = vrev(11, Some(10), &[("layers/00-fleet/a.txt", b"alpha2")]);
+        let out = append(&mut s, &r11, &b11).unwrap();
+        assert!(matches!(out, VerbatimOutcome::Appended(_)));
+        assert_eq!(s.origin_head(Stream::Upstream).unwrap().unwrap().1, 11);
+
+        // Local stream untouched.
+        assert_eq!(s.revision(s.head(Stream::Local).unwrap().unwrap()).unwrap().message, "local");
+    }
+
+    #[test]
+    fn verbatim_divergence_is_an_error_never_auto_resolved() {
+        let (_dir, mut s) = store();
+        let (r10, b10) = vrev(10, None, &[("f", b"one")]);
+        append(&mut s, &r10, &b10).unwrap();
+
+        // Same origin id, different content => VerbatimConflict (§8.2).
+        let (bad, bad_blobs) = vrev(10, None, &[("f", b"two")]);
+        assert!(matches!(
+            append(&mut s, &bad, &bad_blobs),
+            Err(Error::VerbatimConflict { origin_id: 10, .. })
+        ));
+
+        // A revision that does not extend the head => conflict too.
+        let (gap, gap_blobs) = vrev(12, Some(11), &[("f", b"three")]);
+        assert!(matches!(
+            append(&mut s, &gap, &gap_blobs),
+            Err(Error::VerbatimConflict { origin_id: 12, .. })
+        ));
+    }
+
+    #[test]
+    fn verbatim_requires_full_closure() {
+        let (_dir, mut s) = store();
+        let (r10, _blobs) = vrev(10, None, &[("f", b"content")]);
+        // Blob deliberately NOT inserted: incomplete closure must not
+        // become a visible revision (§8.2 atomicity).
+        assert!(matches!(
+            s.append_verbatim(Stream::Upstream, &r10),
+            Err(Error::MissingBlob(_))
+        ));
+        assert_eq!(s.origin_head(Stream::Upstream).unwrap(), None);
+        assert_eq!(s.head(Stream::Upstream).unwrap(), None);
+    }
+
+    #[test]
+    fn put_blob_verifies_digest() {
+        let (_dir, mut s) = store();
+        assert!(s.put_blob(&digest_of(b"right"), b"right").is_ok());
+        assert!(s.has_blob(&digest_of(b"right")).unwrap());
+        assert!(!s.has_blob(&digest_of(b"absent")).unwrap());
+        assert!(matches!(
+            s.put_blob(&digest_of(b"claimed"), b"actual"),
+            Err(Error::Corrupt(_))
+        ));
+    }
+}

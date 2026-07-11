@@ -72,8 +72,12 @@ impl Ownership {
     }
 }
 
-/// See [`Ownership::Gateway`] for the matching rule.
-fn prefix_matches(prefix: &str, path: &str) -> bool {
+/// See [`Ownership::Gateway`] for the matching rule. Public because the
+/// federation scope filter (ext/federation.rs — tier-token
+/// `sync_prefixes`, spec/reeve/06-federation.md §8.7) and the core
+/// delegated-layer write gate (tree.rs, §8.4) apply the SAME rule: one
+/// matcher, no drift.
+pub fn prefix_matches(prefix: &str, path: &str) -> bool {
     if path == prefix {
         return true;
     }

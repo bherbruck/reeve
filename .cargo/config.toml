@@ -1,0 +1,33 @@
+# Static musl release targets (spec/reeve/08-packaging.md §10.1: each
+# role ships as ONE static binary for x86_64 and aarch64 Linux; no
+# shared-library dependencies — a binary copied to a bare box runs).
+#
+# The dependency tree is musl-clean by construction: rustls (no
+# openssl), rusqlite `bundled` (sqlite3.c compiled in), flate2
+# rust_backend, ring (builds its own C/asm via cc). The only host
+# prerequisite is a musl-targeting C compiler for the cc-compiled
+# deps:
+#   x86_64 host  -> apt install musl-tools      (provides musl-gcc)
+#   aarch64 cross -> a aarch64 musl cross gcc, e.g. from
+#                    musl.cc (aarch64-linux-musl-cross) — see
+#                    deploy/ci/build-matrix.yml for the CI recipe.
+#
+# `+crt-static` is the default for *-musl targets; stated explicitly
+# so the packaging intent survives toolchain default changes.
+
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-unknown-linux-musl]
+# Cross linker + cc for the aarch64 static build. CI installs
+# aarch64-linux-musl-cross (musl.cc) and puts it on PATH; override
+# with CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER / CC_* env if
+# your cross toolchain is named differently.
+linker = "aarch64-linux-musl-gcc"
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[env]
+# cc crate compiler selection for the cc-compiled deps (rusqlite
+# bundled, ring) when cross-building the aarch64 musl target.
+CC_aarch64_unknown_linux_musl = "aarch64-linux-musl-gcc"
+AR_aarch64_unknown_linux_musl = "aarch64-linux-musl-ar"

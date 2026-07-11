@@ -102,6 +102,56 @@ pub enum Error {
     UnknownRevision(RevisionId),
     #[error("store corrupt: {0}")]
     Corrupt(String),
+    /// A verbatim append disagreed with what the stream already holds
+    /// (spec/reeve/06-federation.md §8.2: an id/digest mismatch against
+    /// an already-held revision MUST be surfaced as an error and MUST
+    /// NOT be auto-resolved — single-writer was violated somewhere).
+    #[error("verbatim append conflict at origin revision {origin_id}: {detail}")]
+    VerbatimConflict { origin_id: RevisionId, detail: String },
+    /// A verbatim append referenced a blob not present in the store —
+    /// the revision's closure is incomplete, so it MUST NOT become
+    /// visible (§8.2: visible only when the full closure is present).
+    #[error("verbatim append missing blob {0} — closure incomplete")]
+    MissingBlob(String),
+}
+
+/// One revision as published by a PARENT tier, appended verbatim to the
+/// upstream stream (spec/reeve/06-federation.md §8.2: the synced stream
+/// is a verbatim read-only copy — parent revision ids, parents,
+/// authorship and timestamps preserved). The parent's ids live in the
+/// `stream_origins` side table because local row ids are allocated from
+/// this store's own monotonic space (shared with the local stream).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerbatimRevision {
+    /// The revision's id AT THE PARENT tier.
+    pub origin_id: RevisionId,
+    /// The parent-tier id of this revision's parent (chain pointer).
+    pub origin_parent: Option<RevisionId>,
+    pub author: String,
+    pub message: String,
+    /// The parent's timestamp, preserved verbatim.
+    pub created_at: String,
+    /// Full manifest: path -> blob digest. Every digest MUST already be
+    /// present in the blob table (see [`RevisionStore::put_blob`]).
+    pub files: BTreeMap<String, String>,
+}
+
+/// Outcome of [`RevisionStore::append_verbatim`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerbatimOutcome {
+    /// Appended as a new local row.
+    Appended(RevisionId),
+    /// The identical revision (same origin id AND same content) was
+    /// already held — idempotent re-sync / re-import (Law 3).
+    AlreadyPresent(RevisionId),
+}
+
+impl VerbatimOutcome {
+    pub fn local_id(self) -> RevisionId {
+        match self {
+            VerbatimOutcome::Appended(id) | VerbatimOutcome::AlreadyPresent(id) => id,
+        }
+    }
 }
 
 /// Compute the store's digest string for a byte slice:
@@ -162,6 +212,11 @@ CREATE TABLE IF NOT EXISTS revision_files (
     path        TEXT    NOT NULL,
     digest      TEXT    NOT NULL REFERENCES blobs(digest),
     PRIMARY KEY (revision_id, path)
+);
+CREATE TABLE IF NOT EXISTS stream_origins (
+    revision_id   INTEGER PRIMARY KEY REFERENCES revisions(id),
+    origin_id     INTEGER NOT NULL UNIQUE,
+    origin_parent INTEGER
 );
 ";
 
@@ -440,6 +495,221 @@ impl RevisionStore {
                 )
                 .optional()?;
             Ok(content)
+        })
+    }
+
+    /// Whether a blob is already held. Sync clients use this to skip
+    /// re-fetching content-addressed data (federation §8.2: resumable,
+    /// idempotent by digest).
+    pub fn has_blob(&self, digest: &str) -> Result<bool, Error> {
+        self.read(|conn| {
+            let n: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM blobs WHERE digest = ?1",
+                    params![digest],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            Ok(n.is_some())
+        })
+    }
+
+    /// Insert one content-addressed blob, verifying the claimed digest
+    /// against the bytes (a fetch that delivered wrong bytes must fail
+    /// HERE, not corrupt the store). Idempotent — its own transaction,
+    /// so an interrupted multi-blob sync resumes by digest (federation
+    /// §8.2: a sync killed mid-transfer resumes by fetching what is
+    /// still missing; blobs without a referencing revision are inert).
+    pub fn put_blob(&mut self, digest: &str, content: &[u8]) -> Result<(), Error> {
+        let actual = digest_of(content);
+        if actual != digest {
+            return Err(Error::Corrupt(format!(
+                "blob digest mismatch: claimed {digest}, content is {actual}"
+            )));
+        }
+        self.write(|conn| {
+            conn.execute(
+                "INSERT INTO blobs (digest, content) VALUES (?1, ?2)
+                 ON CONFLICT (digest) DO NOTHING",
+                params![digest, content],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Append one PARENT-published revision verbatim to `stream`
+    /// (spec/reeve/06-federation.md §8.2, per-tier revision model).
+    ///
+    /// Rules (all enforced in ONE transaction — Law 3):
+    /// - Idempotent: an identical revision (same origin id, parent,
+    ///   author, message, timestamp AND file manifest) already held
+    ///   returns [`VerbatimOutcome::AlreadyPresent`].
+    /// - Divergence is an ERROR: the same origin id with ANY differing
+    ///   content is [`Error::VerbatimConflict`] — never auto-resolved.
+    /// - Append-only chain: `origin_parent` must equal the stream
+    ///   head's origin id (or `None` on an empty stream).
+    /// - Full closure: every referenced blob must already be present
+    ///   ([`Error::MissingBlob`] otherwise) — a revision becomes
+    ///   visible only when its closure is complete.
+    pub fn append_verbatim(
+        &mut self,
+        stream: Stream,
+        rev: &VerbatimRevision,
+    ) -> Result<VerbatimOutcome, Error> {
+        self.write(|conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+            // Already held?
+            let existing: Option<(RevisionId, Option<RevisionId>)> = tx
+                .query_row(
+                    "SELECT so.revision_id, so.origin_parent
+                     FROM stream_origins so JOIN revisions r ON r.id = so.revision_id
+                     WHERE so.origin_id = ?1 AND r.stream = ?2",
+                    params![rev.origin_id, stream.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if let Some((local_id, held_parent)) = existing {
+                let held = tx.query_row(
+                    "SELECT author, message, created_at FROM revisions WHERE id = ?1",
+                    params![local_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )?;
+                let held_files = tree_at_tx(&tx, local_id)?;
+                let same = held_parent == rev.origin_parent
+                    && held.0 == rev.author
+                    && held.1 == rev.message
+                    && held.2 == rev.created_at
+                    && held_files == rev.files;
+                return if same {
+                    Ok(VerbatimOutcome::AlreadyPresent(local_id))
+                } else {
+                    Err(Error::VerbatimConflict {
+                        origin_id: rev.origin_id,
+                        detail: "already-held revision differs (single-writer violation \
+                                 or storage corruption)"
+                            .to_string(),
+                    })
+                };
+            }
+
+            // Chain rule: must extend the current head.
+            let head_origin: Option<RevisionId> = tx
+                .query_row(
+                    "SELECT so.origin_id
+                     FROM revisions r JOIN stream_origins so ON so.revision_id = r.id
+                     WHERE r.stream = ?1
+                     ORDER BY r.id DESC LIMIT 1",
+                    params![stream.as_str()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if rev.origin_parent != head_origin {
+                return Err(Error::VerbatimConflict {
+                    origin_id: rev.origin_id,
+                    detail: format!(
+                        "origin parent {:?} does not extend the stream head (origin {:?})",
+                        rev.origin_parent, head_origin
+                    ),
+                });
+            }
+
+            // Full closure present?
+            for digest in rev.files.values() {
+                let held: Option<i64> = tx
+                    .query_row(
+                        "SELECT 1 FROM blobs WHERE digest = ?1",
+                        params![digest],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if held.is_none() {
+                    return Err(Error::MissingBlob(digest.clone()));
+                }
+            }
+
+            // Local parent pointer = the stream's current head row.
+            let local_parent: Option<RevisionId> = tx
+                .query_row(
+                    "SELECT MAX(id) FROM revisions WHERE stream = ?1",
+                    params![stream.as_str()],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten();
+
+            tx.execute(
+                "INSERT INTO revisions (stream, parent_id, author, message, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    stream.as_str(),
+                    local_parent,
+                    rev.author,
+                    rev.message,
+                    rev.created_at
+                ],
+            )?;
+            let id = tx.last_insert_rowid();
+            {
+                let mut insert_file = tx.prepare_cached(
+                    "INSERT INTO revision_files (revision_id, path, digest)
+                     VALUES (?1, ?2, ?3)",
+                )?;
+                for (path, digest) in &rev.files {
+                    insert_file.execute(params![id, path, digest])?;
+                }
+            }
+            tx.execute(
+                "INSERT INTO stream_origins (revision_id, origin_id, origin_parent)
+                 VALUES (?1, ?2, ?3)",
+                params![id, rev.origin_id, rev.origin_parent],
+            )?;
+
+            tx.commit()?;
+            Ok(VerbatimOutcome::Appended(id))
+        })
+    }
+
+    /// Head of a verbatim-synced stream as `(local row id, origin id)`,
+    /// if any revision exists. `None` also when the stream head has no
+    /// origin record (a stream never fed by [`append_verbatim`]).
+    pub fn origin_head(
+        &self,
+        stream: Stream,
+    ) -> Result<Option<(RevisionId, RevisionId)>, Error> {
+        self.read(|conn| {
+            let row: Option<(RevisionId, RevisionId)> = conn
+                .query_row(
+                    "SELECT r.id, so.origin_id
+                     FROM revisions r JOIN stream_origins so ON so.revision_id = r.id
+                     WHERE r.stream = ?1
+                     ORDER BY r.id DESC LIMIT 1",
+                    params![stream.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            Ok(row)
+        })
+    }
+
+    /// The parent-tier origin id recorded for a local revision row, if
+    /// it was appended verbatim.
+    pub fn origin_of(&self, revision: RevisionId) -> Result<Option<RevisionId>, Error> {
+        self.read(|conn| {
+            let origin: Option<RevisionId> = conn
+                .query_row(
+                    "SELECT origin_id FROM stream_origins WHERE revision_id = ?1",
+                    params![revision],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            Ok(origin)
         })
     }
 }

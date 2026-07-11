@@ -49,6 +49,10 @@ pub struct AppState {
     /// and the render pipeline's nudge hook (§4.4). Always empty in a
     /// core build — presence degrades to recency, nudges are no-ops.
     pub channels: crate::channels::Channels,
+    /// C11 zot image proxy (docs/decisions/delivery.md D8): `Some`
+    /// iff `REEVE_ZOT_URL` is configured. `None` => non-native /v2
+    /// repos 404 (proxy absent, zot_proxy.rs).
+    pub zot: Option<crate::zot_proxy::ZotProxy>,
 }
 
 impl AppState {

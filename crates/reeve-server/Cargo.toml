@@ -19,6 +19,7 @@ default = [
     "ext-terminal",
     "ext-sse",
     "ext-rollouts",
+    "ext-federation",
 ]
 ext-durability-changeset = []
 # REV-009 secrets vault (spec/reeve/10-secrets.md, C7): AEAD-encrypted
@@ -41,12 +42,29 @@ ext-terminal = ["ext-channel", "dep:futures-util"]
 # REV-003 live status stream (spec/reeve/04-status-stream.md, C8):
 # GET /api/reeve/v1/events SSE endpoint over the in-process event hub.
 ext-sse = ["dep:futures-util"]
+# REV-005 federation (spec/reeve/06-federation.md, C10): tier tokens +
+# parent-side sync serving, the gateway sync loop (revisions + scoped
+# secrets down, status forwarding up), and the §8.5 air-gap export/
+# import CLI. The V9 tables and the two-stream render are CORE (a
+# --no-default-features binary enforces §8.4 ownership and renders an
+# existing upstream stream); this feature gates the moving parts.
+ext-federation = ["dep:reqwest", "dep:ed25519-dalek", "dep:x25519-dalek"]
 # REV-008 staged rollouts (spec/reeve/09-rollouts.md, C9): WFM-internal
 # manifest-advancement engine + operator API. No agent-facing wire
 # surface, so no capability advertisement. The V8 tables (including the
 # core-honored device_render_targets holds) exist regardless of this
 # feature.
 ext-rollouts = []
+# REV-007 §10.4 /install bootstrap (C12): embeds reeve-agent binaries
+# for both arches (build.rs, REEVE_AGENT_BINARIES) and serves them as
+# OCI artifacts on /v2 plus the GET /install shell script. Default OFF
+# — deliberately NOT in the default set (DECISIONS-MADE.md C12): the
+# feature is meaningless without cross-built agent binaries handed to
+# build.rs, and a default-on empty embed would ship an /install that
+# can serve no architecture. Release builds turn it on (deploy/ci/
+# build-matrix.yml). Without the feature the route is absent — 404,
+# invisible per 01-framework §3.1 rule 4.
+embedded-agents = []
 
 [dependencies]
 reeve-types = { path = "../reeve-types" }
@@ -93,6 +111,25 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 # the byte bridge's two pump tasks; unfold/chain for the SSE stream).
 # Same pin family as reeve-agent's.
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"], optional = true }
+# C11 zot /v2 reverse proxy (docs/decisions/delivery.md D8): the boring
+# hyper-util legacy client — same hyper family axum pins, plain http
+# (co-located sidecar, no TLS stack), streams blob bodies through
+# without buffering. Empty<Bytes> outgoing bodies via http-body-util.
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+http-body-util = "0.1"
+# C12 packaging (spec/reeve/08-packaging.md §10.1): embedded spec/reeve/
+# (--spec), embedded ui/dist with SPA fallback (assets.rs).
+rust-embed = { workspace = true }
+# C10 ext-federation: the upstream sync client (§8.2 pull-based),
+# rustls like reeve-agent's pin (musl-friendly, no openssl).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"], optional = true }
+# C10 ext-federation air-gap signing (§8.5): tier identities are
+# ed25519 keypairs minted at first use — pinned per the build brief.
+ed25519-dalek = { version = "2", optional = true }
+# C10 ext-federation sealed box (10-secrets §12.5): X25519 ECIES with
+# the existing XChaCha20-Poly1305 envelope (see ext/federation.rs
+# module docs for the recorded construction).
+x25519-dalek = { version = "2", features = ["static_secrets"], optional = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

@@ -27,6 +27,9 @@ fn config(data_dir: &FsPath, auth: AuthMode) -> Config {
         session_ttl_secs: 3600,
         registry_endpoint: "registry.example:5000".to_string(),
         durability: reeve_server::config::DurabilityConfig::disabled(),
+        zot: None,
+        federation: None,
+        install_open: false,
     }
 }
 

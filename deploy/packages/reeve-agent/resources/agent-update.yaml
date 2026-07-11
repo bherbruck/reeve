@@ -6,11 +6,13 @@
 #
 # The url/digest name the §10.4 agent OCI artifact blob ON THE SERVER
 # THE DEVICE ENROLLED WITH (one origin for trust, transport and
-# enrollment); per-architecture selection happens at render time from
-# device context. The values below are placeholders — a real render
+# enrollment): repo `reeve/agent/<arch>` on the native /v2 routes
+# (crates/reeve-server/src/ext/install.rs, feature embedded-agents).
+# Per-architecture selection happens at render time from device
+# context. The values below are placeholders — a real render
 # substitutes the released binary's digest.
 version: "0.1.0"
 binary:
-  url: /v2/reeve/reeve-agent-x86_64/blobs/sha256:0000000000000000000000000000000000000000000000000000000000000000
+  url: /v2/reeve/agent/x86_64/blobs/sha256:0000000000000000000000000000000000000000000000000000000000000000
   digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
   sizeBytes: 0
