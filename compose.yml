@@ -32,7 +32,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.server
-    image: ${REEVE_IMAGE:-ghcr.io/bherbruck/reeve-server:latest}
+    image: ${REEVE_IMAGE:-ghcr.io/beigesys/reeve-server:latest}
     restart: unless-stopped
     ports:
       # the ONE port: UI + API + artifacts + SSE + ws + /v2
