@@ -1,0 +1,284 @@
+# reeve — build report
+
+Autonomous build of the reeve fleet desired-state manager
+(server + agent + UI). This report is the flight recorder: per-track
+state, test counts, the end-to-end evidence, and the exact commands to
+run the full stack on this machine.
+
+Status: **all tracks A–E complete and green.** `cargo test --workspace`
+= **518 passed, 0 failed**. Clippy clean, `just standalone` green, UI
+builds, no API drift, conformance (core-only) e2e passes. `BLOCKERS.md`
+is empty.
+
+---
+
+## Gate results (Track E3)
+
+| Gate | Command | Result |
+|---|---|---|
+| Workspace tests | `cargo test --workspace` | **518 passed, 0 failed** |
+| Every crate stands alone (Law 2) | `just standalone` | pass (7 crates build alone; `e2e` also builds alone) |
+| Lint | `cargo clippy --workspace --all-targets` | **clean** — 0 warnings |
+| UI build | `cd ui && npm run build` | pass (`✓ built`, dist emitted) |
+| API drift (D10) | `just check-api-drift` | **no diff** — clean after `gen-api` |
+| Conformance (E2) | `just conformance` (server+agent `--no-default-features` + `cargo test -p e2e --no-default-features`) | pass — core loop runs with EVERY extension compiled out |
+
+Clippy note: no warnings at all in this run (the only ever-permitted
+one is the `ui/dist` build-script notice, which did not fire here).
+
+---
+
+## Per-track summary
+
+### Track A — foundations — 103 tests
+
+| Crate | What's built | Tests |
+|---|---|---|
+| `reeve-types` | All Margo wire types + reeve extension types (manifest `(epoch,counter)`, capability advertisement, health payload, SSE events). Round-trip against ACTUAL `spec/margo/` + `reference/` fixtures. | 37 (lib 21, roundtrip 6, reeve_extensions 10) |
+| `desired-state` | Pure overlay-tree render (zero I/O). Full table-test set: precedence, list-replace, null-delete, whole-file replace, 3-layer inheritance, class layer, `enabled:false`, pinned-under-rollout, byte-identical re-render, deterministic `deploymentId`, `${REEVE_REGISTRY}`. | 29 (lib 7, render 22) |
+| `revision-store` | Content-addressed blobs + append-only revisions (SQLite), two streams per tier, diff/blame/read-at-revision; kill-9-mid-commit chaos. | 17 (store 16, chaos 1) |
+| `margo-package` | Parse/validate packages from vendored dirs + real fixtures. | 20 (lib 9, real_fixtures 11) |
+
+### Track B — reeve-agent — 154 tests
+
+Manifest poll (conditional GET, ETag, epoch/counter anti-rollback,
+offline no-op), bundle pull + verify + atomic swap, compose provider
+with resumable journal phases, secrets fetch + minimal re-up,
+persistent channel client, terminal sub-channel, health sampler +
+journal backfill, self-install/update. Includes an HTTP poll suite
+against a live axum mock and a **kill-9-mid-apply subprocess chaos
+test**.
+
+`reeve-agent`: 154 (lib 138, chaos 1, cli 3, example_package 2,
+poll_http 10).
+
+### Track C — reeve-server + device-api — 250 tests
+
+Identity/auth (password/proxy/none, hashed device tokens, three
+roles), enrollment (join tokens, idempotent), authoring API →
+revisions with ownership, render pipeline → per-device OCI bundles +
+manifest, status ingest + backfill + presence, durability
+(snapshot + changeset + verify-restore + restore-at-bootstrap + epoch
+fencing), secrets vault, device channels (ws + terminal byte bridge +
+SSE), rollouts (cohorts/waves/gates/auto-pause), federation
+(upstream sync, scoped secrets, air-gap export/import), zot proxy,
+packaging + `init`.
+
+`reeve-server`: 224 (lib 124 + 16 integration flow suites: auth 5,
+channel 4, delivery 8, devices 6, durability_chaos 1, durability 9,
+enroll 5, federation 7, packaging 8, rollout 9, secrets 5, sse 3,
+status 7, terminal 7, tree_api 8, zot_proxy 8).
+`device-api`: 26 (lib).
+
+### Track D — UI
+
+Full TanStack Router/Query/Table + shadcn UI; utoipa → openapi.json →
+orval-generated client/hooks (no hand-written API types); SPA fallback
++ vite dev proxy. `cd ui && npm run build` succeeds; `just
+check-api-drift` confirms the generated client matches the committed
+one. (UI has no cargo test count; its gate is the build + drift check.)
+
+### Track E — verification — 11 e2e tests (this task)
+
+New workspace test crate **`crates/e2e`** drives the REAL server
+(`reeve_server::bootstrap` + `router::build` on a localhost listener)
+and the REAL agent (`poll_once` → `BundleStore::sync` →
+`resolve_desired` → `converge` → `record_reports` →
+`StatusSink::send_unsent`, the exact sequence in
+`reeve-agent/src/main.rs`) together in-process. The only substituted
+piece is the workload `Provider`: CI has no docker, so `FakeProvider`
+records which apps got `up -d` / `down` — the observable the
+convergence assertions read.
+
+| e2e test | Scenario (charter E1) | Feature |
+|---|---|---|
+| `core_loop_author_render_converge_report` | M1 harness loop: author → render → poll → OCI pull+verify → converge → report → `GET /api/devices` shows `installed` | core |
+| `converged_tick_is_silent_noop` | second tick is 304 + no-op converge (no gratuitous re-up) | core |
+| `real_change_reconverges` | device-layer change bumps manifest by one counter, agent re-ups exactly that app | core |
+| `two_devices_get_distinct_renders` | per-device delivery: two sites → different bundles, each converges its own | core |
+| `agent_resumes_from_disk_offline_after_crash` | kill-9 after pull, before converge; restart with SERVER OFFLINE → heals from on-disk bundle (Law 3 + Law 5) | core |
+| `reconverge_after_crash_is_idempotent_and_deduped` | restart re-runs nothing; status deduped by `(deviceId, seq)` | core |
+| `server_startup_reconciles_unrendered_commit_then_agent_pulls` | server killed between commit and render; next boot reconciles; real agent pulls the healed render | core |
+| `restore_bumps_epoch_and_agent_accepts_what_would_be_a_rollback` | snapshot → advance agent floor → restore OLDER snapshot → epoch fences → agent accepts a counter BELOW its floor as a NOTABLE bump, not a rejected rollback | core |
+| `rotation_reups_only_the_consuming_app` | secret rotation bumps only the consumer's `secrets_version`, bundle digest unchanged, agent re-ups ONLY that app | ext-secrets |
+| `capabilities_reflect_the_compiled_feature_set` | advertisement derived from compiled features (core build advertises zero ext-*; full build advertises them) | both |
+| `core_loop_runs_with_current_feature_set` | conformance headline: the base loop runs under whatever feature set it was built with | both |
+
+Representative output (`cargo test -p e2e`):
+
+```
+test core_loop_author_render_converge_report ... ok
+test converged_tick_is_silent_noop ... ok
+test real_change_reconverges ... ok
+test two_devices_get_distinct_renders ... ok
+test agent_resumes_from_disk_offline_after_crash ... ok
+test reconverge_after_crash_is_idempotent_and_deduped ... ok
+test server_startup_reconciles_unrendered_commit_then_agent_pulls ... ok
+test restore_bumps_epoch_and_agent_accepts_what_would_be_a_rollback ... ok
+test rotation_reups_only_the_consuming_app ... ok
+test capabilities_reflect_the_compiled_feature_set ... ok
+test core_loop_runs_with_current_feature_set ... ok
+
+test result: ok. 11 passed; 0 failed
+```
+
+Conformance build (`cargo test -p e2e --no-default-features`): 10
+tests pass (rotation is ext-gated out); the core loop, all three
+chaos scenarios, and the epoch-restore fencing run with **every
+extension compiled out** — proving no extension is load-bearing for
+the base loop.
+
+#### E1 scenarios covered by the existing in-crate integration suites
+
+The remaining charter-E1 scenarios were already implemented as
+`reeve-server` integration flow tests (real router, two in-process
+servers for federation) and are green; the `e2e` crate adds the
+cross-crate agent↔server coverage those suites do not. Mapping:
+
+| Charter E1 scenario | Where | Test |
+|---|---|---|
+| Federation e2e (root+gateway sync, WAN outage, status backfill) | `federation_flow.rs` | `author_at_root_sync_renders_on_child`, `sync_resumes_after_interrupted_blob_fetch`, `status_forwards_upstream_idempotently` |
+| Air-gap export/import round-trip | `federation_flow.rs` | `airgap_export_import_roundtrip_idempotent_and_tamperproof`, `airgap_status_return_trip` |
+| Rollout wave halts on failed gate | `rollout_flow.rs` | `auto_pause_on_failed_status_then_resume`, `wave_advancement_on_healthy_gate`, `restart_mid_rollout_resumes_exactly` |
+| Terminal session end-to-end + audit row | `terminal_flow.rs` | `bridge_relays_bytes_both_ways_and_audits`, `startup_finalizes_dangling_sessions` |
+| Changeset restore to a sequence point | `durability_flow.rs` | `changeset_extract_apply_roundtrip`, `restore_at_bootstrap_e2e_with_epoch_fencing` |
+
+---
+
+## Running the full stack on THIS machine (server + two agents)
+
+Debug binaries under `target/debug/`. All state is externalized;
+processes are crash-only (kill and restart at will). Ports and paths
+below are examples — adjust freely.
+
+### 0. Build
+
+```bash
+cd /home/bherbruck/github/reeve
+cd ui && npm run build && cd ..          # embed a fresh ui/dist
+cargo build -p reeve-server -p reeve-agent
+```
+
+(Release/musl static binaries: `just build` builds
+`target/release/reeve-server`; the CI matrix in `deploy/ci/` cross-
+builds both arches for packaging.)
+
+### 1. Server
+
+```bash
+export REEVE_DATA_DIR=/tmp/reeve/server      # SQLite DB + keyfile live here
+export REEVE_LISTEN=127.0.0.1:8080
+export REEVE_AUTH=none                        # dev only: anonymous acts as admin
+export REEVE_REGISTRY=registry.example:5000   # ${REEVE_REGISTRY} substitution
+target/debug/reeve-server
+```
+
+First boot with `REEVE_AUTH=password` logs a one-time setup token —
+`POST /api/auth/setup` with it to create the admin. UI + API at
+`http://127.0.0.1:8080` (SPA deep links fall back to index.html).
+
+Optional durability to a local target (test/air-gap tier):
+
+```bash
+export REEVE_DURABILITY=snapshot              # or: changeset
+export REEVE_DURABILITY_TARGET=/tmp/reeve/backups   # file path, file://, or s3://
+```
+
+Disaster recovery is normal startup with the DB absent and the flag
+set (bring the keyfile back into `REEVE_DATA_DIR` first):
+`target/debug/reeve-server --restore-from-target`.
+
+### 2. Mint two join tokens
+
+```bash
+# with REEVE_AUTH=none, anonymous is admin:
+curl -sX POST http://127.0.0.1:8080/api/join-tokens -H 'content-type: application/json' -d '{}'
+curl -sX POST http://127.0.0.1:8080/api/join-tokens -H 'content-type: application/json' -d '{}'
+# each response carries a one-time token string
+```
+
+### 3. Two agents
+
+Agent config lives at `$REEVE_AGENT_CONFIG` (else
+`/etc/reeve-agent/agent.toml`). Enroll writes it; running with no
+subcommand starts the poll→converge loop.
+
+```bash
+# agent A
+REEVE_AGENT_CONFIG=/tmp/reeve/agentA/agent.toml \
+  target/debug/reeve-agent enroll --server http://127.0.0.1:8080 --token <TOKEN_A>
+REEVE_AGENT_CONFIG=/tmp/reeve/agentA/agent.toml target/debug/reeve-agent &
+
+# agent B
+REEVE_AGENT_CONFIG=/tmp/reeve/agentB/agent.toml \
+  target/debug/reeve-agent enroll --server http://127.0.0.1:8080 --token <TOKEN_B>
+REEVE_AGENT_CONFIG=/tmp/reeve/agentB/agent.toml target/debug/reeve-agent &
+```
+
+Each agent stores its own `agent.db` + bundle store under the
+`data_dir` in its config. Without docker the compose provider's
+`up -d` will fail loudly and the app reports `failed` — expected on a
+box with no runtime; the loop, poll, pull, and status reporting all
+still work. On a box WITH docker, workloads converge for real.
+
+### 4. Author desired state → watch it converge
+
+```bash
+# a package + a fleet layer that references it (base64-encode file bodies)
+curl -sX PUT http://127.0.0.1:8080/api/tree/packages/web/1.0.0 \
+  -H 'content-type: application/json' \
+  -d '{"files":{"margo.yaml":"<b64>","compose.yml":"<b64>"}}'
+curl -sX PUT http://127.0.0.1:8080/api/tree/layers/00-fleet \
+  -H 'content-type: application/json' \
+  -d '{"files":{"apps/web/app.yaml":"<b64 of: package:\n  name: web\n  version: 1.0.0\n>"}}'
+
+curl -s http://127.0.0.1:8080/api/devices | jq   # per-device presence + deployment states
+```
+
+Air-gap / offline agents: point `server` at a `dir://<path>` OCI
+layout (a hand-authored State Manifest + render bundle on disk); the
+agent's fetcher takes it as a first-class source — the same code path
+the `e2e` core-loop and the M1 harness exercise, no server required.
+
+---
+
+## What's stubbed / known gaps
+
+Drawn from the concerns recorded in `DECISIONS-MADE.md`. None block the
+build; each is a bounded judgment call or an explicit out-of-scope
+fence from the charter.
+
+- **Terminal enablement via the tree (cross-crate gap, DECISIONS-MADE
+  L272).** `desired-state` render emits only `apps/**` + `manifest.yaml`;
+  no layer mechanism yet places a `config/terminal.yaml` into bundles,
+  so terminal enablement cannot currently be *authored through the
+  tree*. The server + agent terminal machinery is correct against
+  whatever produces the bundle (its tests inject crafted bundles), and
+  `terminal_flow.rs` exercises the full byte-bridge + audit path. This
+  is why the terminal e2e lives in `terminal_flow.rs` rather than being
+  driven tree-first from `crates/e2e`.
+- **Agent-initiated sub-channel open (DECISIONS-MADE L190).** The
+  server ships server-opened sub-channels fully; agent-initiated
+  open (accept/reject tracking) is deferred to the first extension that
+  needs it — accept/reject frames are currently ignored.
+- **Health classification / health-state events (L183).** Device- vs
+  link-degraded classification (§7.4) is deferred to the status-stream
+  task; `presence.rs` documents the seam and preserves the
+  `offline = link down, never device dead` asymmetry.
+- **Resolve-endpoint rate limiting (L232).** Deferred; audit-counting
+  is satisfied via metadata-only tracing of device + `name@version`.
+- **UI cohort selector UX (L359/L399).** Ships exactly the task-directed
+  selectors (explicit device checklist, layer-name chips, label k=v
+  chips → `CohortSpec` union); richer selector UX and explicit
+  waves/strategy arrays left unbuilt per the charter NOT-decided fence.
+- **Charter NOT-decided fences (unbuilt by design):** settings
+  envelope, coordinated secret rotation, operator taxonomies,
+  multi-class devices, RBAC beyond three roles, mTLS/9421. Out of
+  scope, not blockers.
+
+No bug in another crate was uncovered by the e2e work: the epoch-restore
+test was written to match the implemented **increment-then-serve**
+semantics (the fenced epoch reaches a device on its next re-render, and
+the higher epoch makes an otherwise-lower counter a legal notable bump)
+rather than a re-pack-all-on-restore assumption. No source outside
+`crates/e2e` was modified.

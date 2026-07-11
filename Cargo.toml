@@ -8,6 +8,7 @@ members = [
     "crates/desired-state",
     "crates/revision-store",
     "crates/device-api",
+    "crates/e2e",
 ]
 
 [workspace.package]

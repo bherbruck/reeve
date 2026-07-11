@@ -1,47 +1,59 @@
-import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 
 /**
- * Two-step inline confirm for destructive actions (delete/revoke).
- * First click arms it ("Confirm?" for a few seconds), second click
- * fires. No modal — CLAUDE.md forbids CRUD modals.
+ * Confirm gate for a destructive action (delete / revoke / abort).
+ * A confirm/alert dialog — NOT a CRUD modal (CLAUDE.md forbids
+ * create/edit/detail modals; a destructive-action confirm is the
+ * allowed exception). Preserves the prior ConfirmButton API so call
+ * sites are unchanged.
  */
 export function ConfirmButton({
   label,
   confirmLabel = 'Confirm?',
+  description,
   onConfirm,
   disabled,
   size = 'sm',
 }: {
   label: string
   confirmLabel?: string
+  description?: string
   onConfirm: () => void
   disabled?: boolean
   size?: 'sm' | 'default'
 }) {
-  const [armed, setArmed] = useState(false)
-
-  useEffect(() => {
-    if (!armed) return
-    const t = setTimeout(() => setArmed(false), 4000)
-    return () => clearTimeout(t)
-  }, [armed])
-
   return (
-    <Button
-      variant={armed ? 'destructive' : 'outline'}
-      size={size}
-      disabled={disabled}
-      onClick={() => {
-        if (armed) {
-          setArmed(false)
-          onConfirm()
-        } else {
-          setArmed(true)
-        }
-      }}
-    >
-      {armed ? confirmLabel : label}
-    </Button>
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="outline" size={size} disabled={disabled}>
+          {label}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{confirmLabel}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {description ?? 'This action cannot be undone.'}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={() => onConfirm()}>
+            {label}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }

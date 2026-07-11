@@ -4,7 +4,13 @@ import { getListSecretsQueryKey, usePutRoute } from '@/api/endpoints/secrets/sec
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { NativeSelect } from '@/components/ui/native-select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 const SCOPE_KINDS = ['fleet', 'class', 'region', 'site', 'device'] as const
 type ScopeKind = (typeof SCOPE_KINDS)[number]
@@ -95,17 +101,18 @@ export function SecretForm({
       <div className="flex flex-col gap-1.5">
         <Label>Scope</Label>
         <div className="flex items-center gap-2">
-          <NativeSelect
-            value={kind}
-            onChange={(e) => setKind(e.target.value as ScopeKind)}
-            className="w-36"
-          >
-            {SCOPE_KINDS.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
-          </NativeSelect>
+          <Select value={kind} onValueChange={(v) => setKind(v as ScopeKind)}>
+            <SelectTrigger className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SCOPE_KINDS.map((k) => (
+                <SelectItem key={k} value={k}>
+                  {k}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {kind !== 'fleet' && (
             <Input
               value={qualifier}

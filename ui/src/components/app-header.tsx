@@ -4,6 +4,7 @@ import { LogOut } from 'lucide-react'
 import { useLogout, useMe } from '@/api/endpoints/auth/auth'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { SidebarTrigger } from '@/components/ui/sidebar'
 import { cn } from '@/lib/utils'
 import { useSseConnected } from '@/lib/sse'
 
@@ -52,7 +53,9 @@ export function AppHeader() {
         : ''
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-end gap-4 border-b px-6">
+    <header className="flex h-14 shrink-0 items-center gap-4 border-b px-6">
+      <SidebarTrigger className="-ml-2" />
+      <div className="flex-1" />
       <StreamIndicator />
       {who && (
         <span className="flex items-center gap-2 text-sm">

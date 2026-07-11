@@ -1,4 +1,4 @@
-import { Link } from '@tanstack/react-router'
+import { Link, useMatchRoute } from '@tanstack/react-router'
 import {
   Activity,
   GitBranch,
@@ -8,7 +8,16 @@ import {
   Rocket,
   Ticket,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from '@/components/ui/sidebar'
 
 const NAV = [
   { to: '/devices', label: 'Devices', icon: MonitorSmartphone },
@@ -21,31 +30,41 @@ const NAV = [
 ] as const
 
 export function AppSidebar() {
+  const matchRoute = useMatchRoute()
   return (
-    <aside className="flex w-52 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
-      <div className="flex h-14 items-center border-b px-4">
-        <Link to="/devices" className="text-lg font-semibold tracking-tight">
-          reeve
-        </Link>
-      </div>
-      <nav className="flex flex-col gap-1 p-2">
-        {NAV.map(({ to, label, icon: Icon }) => (
+    <Sidebar collapsible="icon">
+      <SidebarHeader>
+        <div className="flex h-8 items-center px-2">
           <Link
-            key={to}
-            to={to}
-            className={cn(
-              'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm',
-              'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-            )}
-            activeProps={{
-              className: 'bg-sidebar-accent text-sidebar-accent-foreground font-medium',
-            }}
+            to="/devices"
+            className="text-lg font-semibold tracking-tight group-data-[collapsible=icon]:hidden"
           >
-            <Icon className="size-4" />
-            {label}
+            reeve
           </Link>
-        ))}
-      </nav>
-    </aside>
+        </div>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {NAV.map(({ to, label, icon: Icon }) => (
+                <SidebarMenuItem key={to}>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip={label}
+                    isActive={!!matchRoute({ to, fuzzy: true })}
+                  >
+                    <Link to={to}>
+                      <Icon />
+                      <span>{label}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+    </Sidebar>
   )
 }

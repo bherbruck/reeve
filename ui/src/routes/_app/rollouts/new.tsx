@@ -20,7 +20,13 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { NativeSelect } from '@/components/ui/native-select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 export const Route = createFileRoute('/_app/rollouts/new')({
   component: RolloutCreatePage,
@@ -147,18 +153,18 @@ function RolloutCreatePage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <NativeSelect
-              value={revision}
-              onChange={(e) => setRevision(e.target.value)}
-              className="max-w-xl"
-            >
-              <option value="">Select a revision…</option>
-              {localRevs.map((r) => (
-                <option key={r.id} value={String(r.id)}>
-                  r{r.id} — {r.message} ({r.author})
-                </option>
-              ))}
-            </NativeSelect>
+            <Select value={revision} onValueChange={setRevision}>
+              <SelectTrigger className="max-w-xl">
+                <SelectValue placeholder="Select a revision…" />
+              </SelectTrigger>
+              <SelectContent>
+                {localRevs.map((r) => (
+                  <SelectItem key={r.id} value={String(r.id)}>
+                    r{r.id} — {r.message} ({r.author})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </CardContent>
         </Card>
 

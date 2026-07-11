@@ -4,6 +4,7 @@ import { Outlet, createFileRoute, redirect } from '@tanstack/react-router'
 import { getMeQueryOptions } from '@/api/endpoints/auth/auth'
 import { AppHeader } from '@/components/app-header'
 import { AppSidebar } from '@/components/app-sidebar'
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { startSse } from '@/lib/sse'
 
 export const Route = createFileRoute('/_app')({
@@ -28,14 +29,14 @@ function AppLayout() {
   useEffect(() => startSse(queryClient), [queryClient])
 
   return (
-    <div className="flex h-screen">
+    <SidebarProvider>
       <AppSidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <SidebarInset className="min-h-0">
         <AppHeader />
         <main className="min-h-0 flex-1 overflow-y-auto">
           <Outlet />
         </main>
-      </div>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   )
 }

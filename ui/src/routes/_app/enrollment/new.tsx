@@ -18,7 +18,13 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { NativeSelect } from '@/components/ui/native-select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { CopyButton } from '@/components/copy-button'
 import { fmtUnix } from '@/lib/format'
 
@@ -142,18 +148,24 @@ function JoinTokenCreatePage() {
               <Label htmlFor="device-binding">
                 Re-enroll binding (optional)
               </Label>
-              <NativeSelect
-                id="device-binding"
-                value={deviceId}
-                onChange={(e) => setDeviceId(e.target.value)}
+              <Select
+                value={deviceId || '__none__'}
+                onValueChange={(v) => setDeviceId(v === '__none__' ? '' : v)}
               >
-                <option value="">None — enrolls a new device</option>
-                {deviceRows.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId}>
-                    {d.hostname} ({d.deviceId})
-                  </option>
-                ))}
-              </NativeSelect>
+                <SelectTrigger id="device-binding" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">
+                    None — enrolls a new device
+                  </SelectItem>
+                  {deviceRows.map((d) => (
+                    <SelectItem key={d.deviceId} value={d.deviceId}>
+                      {d.hostname} ({d.deviceId})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <span className="text-xs text-muted-foreground">
                 Bound tokens re-key an EXISTING device (lost identity,
                 reinstall) instead of enrolling a new one.

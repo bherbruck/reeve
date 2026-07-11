@@ -1,0 +1,57 @@
+[package]
+name = "e2e"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Track E (docs/build-charter.md): the end-to-end + conformance suite.
+# This crate drives the REAL reeve-server (bootstrap/router/render/
+# durability) and the REAL reeve-agent (poll/BundleStore/converge/
+# StatusSink/Provider) together in-process, over a real localhost
+# listener — the Milestone-1 harness loop and beyond, as automated
+# tests. It ships no runtime code; everything lives in tests/ over the
+# shared harness in src/lib.rs.
+#
+# The feature seam is the CONFORMANCE proof (E2): the `ext` feature (on
+# by default) turns on EVERY reeve extension on both binaries; building
+# this crate `--no-default-features` compiles a core-only server+agent
+# and runs the core-loop e2e with zero extensions — proving no
+# extension is load-bearing for the base loop. Extension-only scenarios
+# (secrets rotation, etc.) are gated behind `#[cfg(feature = "ext")]`
+# so the core build still compiles.
+
+[features]
+default = ["ext"]
+ext = [
+    "reeve-server/ext-durability-changeset",
+    "reeve-server/ext-secrets",
+    "reeve-server/ext-channel",
+    "reeve-server/ext-terminal",
+    "reeve-server/ext-sse",
+    "reeve-server/ext-rollouts",
+    "reeve-server/ext-federation",
+    "reeve-agent/ext-secrets",
+    "reeve-agent/ext-channel",
+    "reeve-agent/ext-terminal",
+    "reeve-agent/ext-health",
+]
+
+[dependencies]
+reeve-server = { path = "../reeve-server", default-features = false }
+reeve-agent = { path = "../reeve-agent", default-features = false }
+reeve-types = { path = "../reeve-types" }
+revision-store = { path = "../revision-store" }
+desired-state = { path = "../desired-state" }
+tokio = { workspace = true }
+axum = { workspace = true }
+rusqlite = { workspace = true }
+serde_json = { workspace = true }
+# Black-box authoring + polling against the served listener: the same
+# rustls client family reeve-agent pins (musl-friendly).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+base64 = "0.22"
+tempfile = "3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
