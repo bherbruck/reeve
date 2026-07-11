@@ -203,7 +203,12 @@ impl DurabilityConfig {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
-        Self::from_lookup(|k| std::env::var(k).ok())
+        // An empty (or whitespace-only) env var reads as UNSET. Docker
+        // Compose materializes `${VAR:-}` as `VAR=""`, so without this a
+        // blank REEVE_UPSTREAM/REEVE_ZOT_URL/etc. would be parsed as a
+        // present-but-invalid value and refuse to boot. Empty == absent
+        // is the 12-factor convention and what an operator means.
+        Self::from_lookup(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()))
     }
 
     /// Testable core: build config from any key lookup. Proxy mode
@@ -547,6 +552,35 @@ mod tests {
     #[test]
     fn federation_defaults_to_root() {
         assert!(cfg(&[]).unwrap().federation.is_none());
+    }
+
+    /// Regression: Docker Compose materializes `${VAR:-}` as `VAR=""`,
+    /// so blank optional vars must read as UNSET, not as a
+    /// present-but-invalid value. Uses the same empty-filter closure as
+    /// `from_env`. Before the fix, blank REEVE_UPSTREAM tripped
+    /// "must be an absolute URL" and the server refused to boot.
+    #[test]
+    fn blank_env_vars_read_as_unset_like_from_env() {
+        let map: HashMap<String, String> = [
+            ("REEVE_UPSTREAM", ""),
+            ("REEVE_UPSTREAM_TOKEN", ""),
+            ("REEVE_SITE", ""),
+            ("REEVE_ZOT_URL", ""),
+            ("REEVE_REGISTRY", ""),
+            ("REEVE_DURABILITY_TARGET", ""),
+            ("REEVE_PROXY_USER_HEADER", "   "),
+            ("REEVE_INSTALL_OPEN", ""),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        // Mirror from_env's filter: empty/whitespace == absent.
+        let c = Config::from_lookup(|k| map.get(k).cloned().filter(|v| !v.trim().is_empty()))
+            .expect("blank vars must boot as a root/hub, not refuse");
+        assert!(c.federation.is_none(), "blank REEVE_UPSTREAM => root");
+        assert!(c.zot.is_none(), "blank REEVE_ZOT_URL => no proxy");
+        assert!(matches!(c.auth, AuthMode::Password));
+        assert!(!c.install_open);
     }
 
     #[test]

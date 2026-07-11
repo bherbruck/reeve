@@ -38,49 +38,52 @@ services:
       # the ONE port: UI + API + artifacts + SSE + ws + /v2
       - "${REEVE_PORT:-8420}:8420"
     environment:
-      REEVE_LISTEN: 0.0.0.0:8420
-      REEVE_DATA_DIR: /data
+      # Empty value = unset (the server reads blank env as absent).
+      - REEVE_LISTEN=0.0.0.0:8420
+      - REEVE_DATA_DIR=/data
       # --- auth (D1) ----------------------------------------------
       # password (default) | proxy | none. First boot with zero
       # users logs a one-time setup token and serves /setup (D1).
-      REEVE_AUTH: ${REEVE_AUTH:-password}
-      REEVE_PROXY_USER_HEADER: ${REEVE_PROXY_USER_HEADER:-}
-      REEVE_PROXY_ROLE_HEADER: ${REEVE_PROXY_ROLE_HEADER:-}
-      REEVE_PROXY_TRUSTED_CIDR: ${REEVE_PROXY_TRUSTED_CIDR:-}
-      REEVE_SESSION_TTL_SECS: ${REEVE_SESSION_TTL_SECS:-604800}
+      - REEVE_AUTH=${REEVE_AUTH:-password}
+      - REEVE_PROXY_USER_HEADER=${REEVE_PROXY_USER_HEADER:-}
+      - REEVE_PROXY_ROLE_HEADER=${REEVE_PROXY_ROLE_HEADER:-}
+      - REEVE_PROXY_TRUSTED_CIDR=${REEVE_PROXY_TRUSTED_CIDR:-}
+      - REEVE_SESSION_TTL_SECS=${REEVE_SESSION_TTL_SECS:-604800}
       # --- render (D8) --------------------------------------------
       # tier registry endpoint substituted for ${REEVE_REGISTRY} at
       # render time; the address devices reach this server on.
-      REEVE_REGISTRY: ${REEVE_REGISTRY:-}
+      - REEVE_REGISTRY=${REEVE_REGISTRY:-}
       # --- tier / federation (D9 / REV-005) -----------------------
       # unset => root/hub (also the air-gapped mode)
       # set   => spoke/gateway syncing revisions from this upstream
-      REEVE_UPSTREAM: ${REEVE_UPSTREAM:-}
-      REEVE_UPSTREAM_TOKEN: ${REEVE_UPSTREAM_TOKEN:-}
-      REEVE_SITE: ${REEVE_SITE:-}
-      REEVE_SYNC_INTERVAL_SECS: ${REEVE_SYNC_INTERVAL_SECS:-60}
+      - REEVE_UPSTREAM=${REEVE_UPSTREAM:-}
+      - REEVE_UPSTREAM_TOKEN=${REEVE_UPSTREAM_TOKEN:-}
+      - REEVE_SITE=${REEVE_SITE:-}
+      - REEVE_SYNC_INTERVAL_SECS=${REEVE_SYNC_INTERVAL_SECS:-60}
       # --- durability (D16 / SPEC §9: all in-binary) --------------
       # none (default) | snapshot | changeset (seconds-RPO)
-      REEVE_DURABILITY: ${REEVE_DURABILITY:-none}
+      - REEVE_DURABILITY=${REEVE_DURABILITY:-none}
       # object-store url: s3://bucket/prefix, or file:///data/snapshots
       # for air-gapped tiers
-      REEVE_DURABILITY_TARGET: ${REEVE_DURABILITY_TARGET:-}
-      REEVE_DURABILITY_INSTANCE: ${REEVE_DURABILITY_INSTANCE:-default}
-      REEVE_DURABILITY_SNAPSHOT_INTERVAL_SECS: ${REEVE_DURABILITY_SNAPSHOT_INTERVAL_SECS:-900}
-      REEVE_DURABILITY_CHANGESET_INTERVAL_SECS: ${REEVE_DURABILITY_CHANGESET_INTERVAL_SECS:-5}
-      REEVE_DURABILITY_VERIFY_INTERVAL_SECS: ${REEVE_DURABILITY_VERIFY_INTERVAL_SECS:-86400}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_ENDPOINT: ${AWS_ENDPOINT:-}
+      - REEVE_DURABILITY_TARGET=${REEVE_DURABILITY_TARGET:-}
+      - REEVE_DURABILITY_INSTANCE=${REEVE_DURABILITY_INSTANCE:-default}
+      - REEVE_DURABILITY_SNAPSHOT_INTERVAL_SECS=${REEVE_DURABILITY_SNAPSHOT_INTERVAL_SECS:-900}
+      - REEVE_DURABILITY_CHANGESET_INTERVAL_SECS=${REEVE_DURABILITY_CHANGESET_INTERVAL_SECS:-5}
+      - REEVE_DURABILITY_VERIFY_INTERVAL_SECS=${REEVE_DURABILITY_VERIFY_INTERVAL_SECS:-86400}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_ENDPOINT=${AWS_ENDPOINT:-}
       # --- registry proxy (D8) ------------------------------------
-      # when the registry profile is up, reeve proxies image /v2/*
-      # routes to zot (own artifacts are served natively, D7); device
-      # tokens terminate here, Basic creds inject toward the backend.
-      REEVE_ZOT_URL: ${REEVE_ZOT_URL:-http://registry:5000}
-      REEVE_ZOT_USERNAME: ${REEVE_ZOT_USERNAME:-}
-      REEVE_ZOT_PASSWORD: ${REEVE_ZOT_PASSWORD:-}
+      # Off unless set (empty = no proxy). With `--profile registry`,
+      # set REEVE_ZOT_URL=http://registry:5000 (in .env) so reeve
+      # proxies image /v2/* routes to the zot sidecar; own artifacts
+      # are served natively (D7), device tokens terminate here and
+      # Basic creds inject toward the backend.
+      - REEVE_ZOT_URL=${REEVE_ZOT_URL:-}
+      - REEVE_ZOT_USERNAME=${REEVE_ZOT_USERNAME:-}
+      - REEVE_ZOT_PASSWORD=${REEVE_ZOT_PASSWORD:-}
       # --- bootstrap (§10.4) --------------------------------------
-      REEVE_INSTALL_OPEN: ${REEVE_INSTALL_OPEN:-}
+      - REEVE_INSTALL_OPEN=${REEVE_INSTALL_OPEN:-}
     volumes:
       - reeve-data:/data
     healthcheck:

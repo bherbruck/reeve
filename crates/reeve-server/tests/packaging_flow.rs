@@ -238,10 +238,16 @@ fn compose_env_keys_are_all_read_by_the_binary() {
     let canonical = std::fs::read_to_string(canonical_path).unwrap();
     let v: serde_json::Value =
         serde_yaml_ng::from_str::<serde_json::Value>(&canonical).expect("compose parses");
-    let env = v["services"]["reeve-server"]["environment"]
-        .as_object()
-        .expect("reeve-server.environment map");
-    for key in env.keys().filter(|k| k.starts_with("REEVE_")) {
+    // Compose list form: `- KEY=value`; take the key before the first '='.
+    let entries = v["services"]["reeve-server"]["environment"]
+        .as_array()
+        .expect("reeve-server.environment list");
+    let keys: Vec<String> = entries
+        .iter()
+        .map(|e| e.as_str().expect("env entry is a string"))
+        .map(|e| e.split_once('=').map(|(k, _)| k).unwrap_or(e).to_string())
+        .collect();
+    for key in keys.iter().filter(|k| k.starts_with("REEVE_")) {
         assert!(
             KNOWN.contains(&key.as_str()),
             "compose sets {key} into the server environment, but config.rs reads no such var — \
@@ -250,7 +256,7 @@ fn compose_env_keys_are_all_read_by_the_binary() {
     }
     // AWS_* target creds are read by object_store, not config.rs —
     // present in the compose but intentionally outside the REEVE_ set.
-    assert!(env.contains_key("AWS_ACCESS_KEY_ID"), "S3 target creds must be wired");
+    assert!(keys.iter().any(|k| k == "AWS_ACCESS_KEY_ID"), "S3 target creds must be wired");
 }
 
 #[test]

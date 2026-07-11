@@ -424,3 +424,8 @@ One line each: what, where, which doc informed it.
 - Container images use a GNU release build into distroless/cc (CA certs + glibc), not static musl: aws-lc/rustls builds without a musl sysroot dance and TLS to S3/upstream works. Static-musl bare-box binaries remain the deploy/ci matrix's job (§10.1 self-install path unaffected).
 - docker/Dockerfile.agent is DEV/TEST only (docker:cli base, needs host /var/run/docker.sock): the agent shells out to `docker compose` and its real deploy path is the static binary + systemd unit (§10.3). Bare `reeve-agent` invocation is the run loop (no `run` subcommand).
 - .dockerignore keeps .git (build.rs derives GIT_HASH for --version) but drops target/, node_modules, *.db, .env.
+
+## Empty-env fix + compose list style
+- BUG (reported at runtime): Docker Compose materializes `${VAR:-}` as `VAR=""`, and Config::from_env read a blank var as present-but-invalid — blank REEVE_UPSTREAM (then REEVE_ZOT_URL) refused startup ("must be an absolute URL"). Fix: from_env's lookup now filters empty/whitespace to None (12-factor: empty == unset), one point covering every optional var. Regression test config::blank_env_vars_read_as_unset_like_from_env.
+- compose.yml: REEVE_ZOT_URL default is now empty (proxy OFF unless set), not http://registry:5000 — avoids a dangling proxy pointing at a non-running host when the registry profile is off. --profile registry pairs with setting REEVE_ZOT_URL in .env.
+- compose environment switched to list style (`- VAR=value`) per operator preference; drift test updated to parse the list form.
