@@ -130,9 +130,8 @@ function PackageUploadPage() {
         <CardHeader>
           <CardTitle className="text-base">Package directory</CardTitle>
           <CardDescription>
-            Pick the directory that contains margo.yaml. The whole directory
-            is committed to <code>packages/&lt;name&gt;/&lt;version&gt;/</code>{' '}
-            as one revision.
+            Pick the directory that contains margo.yaml. The whole directory is
+            uploaded as one package version, ready to deploy.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">

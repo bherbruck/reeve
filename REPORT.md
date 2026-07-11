@@ -5,10 +5,10 @@ Autonomous build of the reeve fleet desired-state manager
 state, test counts, the end-to-end evidence, and the exact commands to
 run the full stack on this machine.
 
-Status: **all tracks A–E complete and green.** `cargo test --workspace`
-= **518 passed, 0 failed**. Clippy clean, `just standalone` green, UI
-builds, no API drift, conformance (core-only) e2e passes. `BLOCKERS.md`
-is empty.
+Status: **all tracks A–E complete and green, plus the operator fleet
+model (REV-010).** `cargo test --workspace` = **542 passed, 0 failed**.
+Clippy clean, `just standalone` green, UI builds, no API drift,
+conformance (core-only) e2e passes. `BLOCKERS.md` is empty.
 
 ---
 
@@ -16,7 +16,7 @@ is empty.
 
 | Gate | Command | Result |
 |---|---|---|
-| Workspace tests | `cargo test --workspace` | **518 passed, 0 failed** |
+| Workspace tests | `cargo test --workspace` | **542 passed, 0 failed** (50 binaries) |
 | Every crate stands alone (Law 2) | `just standalone` | pass (7 crates build alone; `e2e` also builds alone) |
 | Lint | `cargo clippy --workspace --all-targets` | **clean** — 0 warnings |
 | UI build | `cd ui && npm run build` | pass (`✓ built`, dist emitted) |
@@ -25,6 +25,86 @@ is empty.
 
 Clippy note: no warnings at all in this run (the only ever-permitted
 one is the `ui/dist` build-script notice, which did not fire here).
+
+---
+
+## Fleet model (REV-010)
+
+The operator-facing layer over the storage engine, specified in
+`spec/reeve/11-fleet-model.md`. The engine underneath is unchanged
+(content-addressed revisions + overlay-layer merge); REV-010 renames
+the tiers to a fixed hierarchy, adds the device-management write paths,
+and mandates the UI present **intent**, never the storage plumbing
+("tree", "revision", "layer", "blame", numbered paths never surface).
+
+**The hierarchy.** Config merges top-down, deepest wins:
+`All devices → Fleet → Site → Type → Device`. A device's layer chain is
+built server-side from its device row (`00-all` + assigned
+`10-fleet.<f>` / `20-site.<s>` / `30-type.<t>` + `40-device.<id>`),
+never from tree content (`render.rs::DeviceRender::layer_chain`).
+
+**Now fully manageable from the web (no terminal, no raw API):**
+
+| Capability | API | UI |
+|---|---|---|
+| Browse the hierarchy (drill Fleet → Site → Type → Device) | `GET /api/devices` | `routes/_app/fleet/index.tsx` |
+| Rename a device (display name, distinct from `device_id`) | `PATCH /api/devices/{id}` `{displayName}` | device detail |
+| Move a device between groups (re-renders on change) | `PATCH …/{id}` `{fleet,site,type}` (null clears) | device detail |
+| Tag a device (ad-hoc grouping/cohorts, never config) | `PATCH …/{id}` `{tags}` | device detail |
+| Pin (hold current config, skip new deploys/rollouts) | `PATCH …/{id}` `{pinned}` | device detail |
+| Decommission (revoke credential + tombstone, idempotent) | `POST …/{id}/decommission` | device detail |
+| Deploy/undeploy a stack to a **scope** (never a layer path) | `POST /api/deploy` / `/api/undeploy` `{stack, scope}` | `routes/_app/deploy/index.tsx` |
+| History (who/what/when) with one-click **Undo** | `GET /api/history`, `POST /api/history/{id}/undo` | `routes/_app/history/index.tsx` |
+| Rollout by scope + optional tag cohort, waves + gates | rollout routes (REV-008) | `routes/_app/rollouts/*` |
+| Enrollment with optional pre-assign (fleet/site/type/tags) | `POST /api/join-tokens` `{fleet?,site?,type?,tags?}` | `routes/_app/enrollment/new.tsx` |
+| Server tier (Root hub vs Site gateway) | `GET /api/server` (`REEVE_TIER`) | `routes/_app/ops/index.tsx` |
+
+`scope` is `{kind:"all"}` / `{kind:"fleet"|"site"|"type", name}` /
+`{kind:"devices", ids:[…]}`; the operator sees "deploy hello to Site
+plant-a", the store sees one authoring commit into
+`layers/20-site.plant-a/apps/hello/app.yaml`. Deploy re-renders only
+the devices whose merged content actually moved.
+
+**UI plumbing removed.** The legacy raw layer/revision/blame editor
+routes (`ui/src/routes/_app/tree/`) were deleted — they exposed exactly
+the storage plumbing §11.5 forbids. Deploy and the package catalog keep
+the shared `src/lib/tree.ts` infra; nothing user-visible references a
+revision or numbered layer (visible-copy jargon sweep is clean).
+
+**Coverage.** `crates/reeve-server/tests/fleet_ops_flow.rs` drives
+deploy-to-scope + History/Undo over the real router (deploy authors the
+right layer and re-renders only the scope's devices; undeploy removes
+it; History carries human summaries; Undo restores prior content as a
+NEW change). `devices_flow.rs` covers PATCH assignment/rename/pin/tag +
+decommission; `scope.rs` unit-tests the taxonomy mapping and human
+labels.
+
+### Dev demo walkthrough (`./scripts/dev-up.sh [N]`)
+
+`scripts/dev-up.sh` now stands up a **populated** fleet, so the UI lands
+on a real tree instead of empties. Idempotent — safe to re-run. It:
+
+1. builds + boots one `reeve-server` (password auth, seeded
+   `admin`/`password`) and waits for `/healthz`;
+2. enables the remote terminal fleet-wide by authoring
+   `config/terminal.yaml` into `00-all` (the base every device
+   inherits — the render places it in every device's bundle);
+3. vendors a tiny single-service nginx **`hello`** compose package via
+   `PUT /api/tree/packages/hello/1.0.0`;
+4. mints a join token and starts `N` virtual devices (default 3), which
+   enroll themselves;
+5. waits for them to appear, then `PATCH`es each into a fleet/site/type
+   round-robin with a display name + tags:
+   `Fleet north → Site plant-a → {hmi, sensor}` and
+   `Fleet south → Site plant-b → {hmi}`;
+6. deploys `hello` to **Site plant-a** via `POST /api/deploy` — the two
+   plant-a devices pick up the stack on the next render.
+
+Opening `http://localhost:8420` then shows a browsable
+Fleet → Site → Type → Device tree, devices with human names + tags, a
+stack deployed to a site, History with human summaries, and a
+terminal-enabled fleet. `./scripts/dev-down.sh` tears it down (volumes
+included).
 
 ---
 
@@ -248,15 +328,16 @@ Drawn from the concerns recorded in `DECISIONS-MADE.md`. None block the
 build; each is a bounded judgment call or an explicit out-of-scope
 fence from the charter.
 
-- **Terminal enablement via the tree (cross-crate gap, DECISIONS-MADE
-  L272).** `desired-state` render emits only `apps/**` + `manifest.yaml`;
-  no layer mechanism yet places a `config/terminal.yaml` into bundles,
-  so terminal enablement cannot currently be *authored through the
-  tree*. The server + agent terminal machinery is correct against
-  whatever produces the bundle (its tests inject crafted bundles), and
-  `terminal_flow.rs` exercises the full byte-bridge + audit path. This
-  is why the terminal e2e lives in `terminal_flow.rs` rather than being
-  driven tree-first from `crates/e2e`.
+- **Terminal enablement via the tree — RESOLVED (was DECISIONS-MADE
+  L272).** `desired-state` render now emits `config/**` alongside
+  `apps/**` + `manifest.yaml` (`render.rs::render_bundle_config`,
+  whole-file replace across the chain), so terminal enablement is
+  authored through the tree exactly like any other config: a device's
+  bundle carries the merged `config/terminal.yaml`, which the agent
+  reads from the bundle root and the server re-checks from its own
+  render. `scripts/dev-up.sh` uses this directly (it enables the
+  terminal fleet-wide by authoring `config/terminal.yaml` into
+  `00-all`). `terminal_flow.rs` still owns the byte-bridge + audit e2e.
 - **Agent-initiated sub-channel open (DECISIONS-MADE L190).** The
   server ships server-opened sub-channels fully; agent-initiated
   open (accept/reject tracking) is deferred to the first extension that

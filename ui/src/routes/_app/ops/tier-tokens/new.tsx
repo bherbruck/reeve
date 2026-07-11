@@ -110,7 +110,7 @@ function TierTokenCreatePage() {
           <CardHeader>
             <CardTitle className="text-base">Token parameters</CardTitle>
             <CardDescription>
-              The child tier syncs only tree paths under its prefixes; blank
+              The child gateway syncs only content under its prefixes; blank
               prefixes use the server default set.
             </CardDescription>
           </CardHeader>
@@ -136,7 +136,7 @@ function TierTokenCreatePage() {
                   className="font-mono"
                 />
                 <span className="text-xs text-muted-foreground">
-                  The layer family the child owns.
+                  The site this gateway serves.
                 </span>
               </div>
             </div>

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { parse as parseYaml } from 'yaml'
 import { Rocket } from 'lucide-react'
@@ -196,12 +196,7 @@ function DeployPage() {
 
   return (
     <div className="flex flex-col gap-4 p-6">
-      <div className="flex items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold tracking-tight">Deploy</h1>
-        <Button variant="ghost" size="sm" asChild>
-          <Link to="/tree">Advanced config</Link>
-        </Button>
-      </div>
+      <h1 className="text-xl font-semibold tracking-tight">Deploy</h1>
 
       {!operator && (
         <p className="text-sm text-muted-foreground">

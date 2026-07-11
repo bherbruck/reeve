@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { Link, createFileRoute } from '@tanstack/react-router'
-import { ArrowLeft, Pencil, Pin } from 'lucide-react'
+import { ArrowLeft, Pencil, Pin, Rocket } from 'lucide-react'
 import { useMe } from '@/api/endpoints/auth/auth'
 import { useDetail, useJournal } from '@/api/endpoints/devices/devices'
 import type { DeviceDetail, JournalEntry } from '@/api/model'
@@ -319,17 +319,25 @@ function DeviceDetailPage() {
                 stale identity
               </Badge>
             )}
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-2">
               {operator && (
-                <Button size="sm" asChild>
-                  <Link
-                    to="/devices/$device-id/edit"
-                    params={{ 'device-id': deviceId }}
-                  >
-                    <Pencil className="size-4" />
-                    Edit
-                  </Link>
-                </Button>
+                <>
+                  <Button variant="outline" size="sm" asChild>
+                    <Link to="/deploy">
+                      <Rocket className="size-4" />
+                      Deploy
+                    </Link>
+                  </Button>
+                  <Button size="sm" asChild>
+                    <Link
+                      to="/devices/$device-id/edit"
+                      params={{ 'device-id': deviceId }}
+                    >
+                      <Pencil className="size-4" />
+                      Edit
+                    </Link>
+                  </Button>
+                </>
               )}
             </div>
           </>

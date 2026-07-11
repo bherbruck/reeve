@@ -13,7 +13,6 @@ import { Route as SetupRouteImport } from './routes/setup'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
-import { Route as AppTreeIndexRouteImport } from './routes/_app/tree/index'
 import { Route as AppSecretsIndexRouteImport } from './routes/_app/secrets/index'
 import { Route as AppRolloutsIndexRouteImport } from './routes/_app/rollouts/index'
 import { Route as AppPackagesIndexRouteImport } from './routes/_app/packages/index'
@@ -28,14 +27,10 @@ import { Route as AppRolloutsNewRouteImport } from './routes/_app/rollouts/new'
 import { Route as AppRolloutsRolloutIdRouteImport } from './routes/_app/rollouts/$rollout-id'
 import { Route as AppPackagesNewRouteImport } from './routes/_app/packages/new'
 import { Route as AppEnrollmentNewRouteImport } from './routes/_app/enrollment/new'
-import { Route as AppTreeRevisionsIndexRouteImport } from './routes/_app/tree/revisions/index'
 import { Route as AppDevicesDeviceIdIndexRouteImport } from './routes/_app/devices/$device-id/index'
-import { Route as AppTreeRevisionsRevisionIdRouteImport } from './routes/_app/tree/revisions/$revision-id'
 import { Route as AppPackagesNameVersionRouteImport } from './routes/_app/packages/$name.$version'
 import { Route as AppOpsTierTokensNewRouteImport } from './routes/_app/ops/tier-tokens/new'
 import { Route as AppDevicesDeviceIdEditRouteImport } from './routes/_app/devices/$device-id/edit'
-import { Route as AppTreeLayersLayerIndexRouteImport } from './routes/_app/tree/layers/$layer/index'
-import { Route as AppTreeLayersLayerEditRouteImport } from './routes/_app/tree/layers/$layer/edit'
 
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
@@ -54,11 +49,6 @@ const AppRoute = AppRouteImport.update({
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppTreeIndexRoute = AppTreeIndexRouteImport.update({
-  id: '/tree/',
-  path: '/tree/',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSecretsIndexRoute = AppSecretsIndexRouteImport.update({
@@ -131,22 +121,11 @@ const AppEnrollmentNewRoute = AppEnrollmentNewRouteImport.update({
   path: '/enrollment/new',
   getParentRoute: () => AppRoute,
 } as any)
-const AppTreeRevisionsIndexRoute = AppTreeRevisionsIndexRouteImport.update({
-  id: '/tree/revisions/',
-  path: '/tree/revisions/',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppDevicesDeviceIdIndexRoute = AppDevicesDeviceIdIndexRouteImport.update({
   id: '/devices/$device-id/',
   path: '/devices/$device-id/',
   getParentRoute: () => AppRoute,
 } as any)
-const AppTreeRevisionsRevisionIdRoute =
-  AppTreeRevisionsRevisionIdRouteImport.update({
-    id: '/tree/revisions/$revision-id',
-    path: '/tree/revisions/$revision-id',
-    getParentRoute: () => AppRoute,
-  } as any)
 const AppPackagesNameVersionRoute = AppPackagesNameVersionRouteImport.update({
   id: '/packages/$name/$version',
   path: '/packages/$name/$version',
@@ -160,16 +139,6 @@ const AppOpsTierTokensNewRoute = AppOpsTierTokensNewRouteImport.update({
 const AppDevicesDeviceIdEditRoute = AppDevicesDeviceIdEditRouteImport.update({
   id: '/devices/$device-id/edit',
   path: '/devices/$device-id/edit',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppTreeLayersLayerIndexRoute = AppTreeLayersLayerIndexRouteImport.update({
-  id: '/tree/layers/$layer/',
-  path: '/tree/layers/$layer/',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppTreeLayersLayerEditRoute = AppTreeLayersLayerEditRouteImport.update({
-  id: '/tree/layers/$layer/edit',
-  path: '/tree/layers/$layer/edit',
   getParentRoute: () => AppRoute,
 } as any)
 
@@ -191,15 +160,10 @@ export interface FileRoutesByFullPath {
   '/packages/': typeof AppPackagesIndexRoute
   '/rollouts/': typeof AppRolloutsIndexRoute
   '/secrets/': typeof AppSecretsIndexRoute
-  '/tree/': typeof AppTreeIndexRoute
   '/devices/$device-id/edit': typeof AppDevicesDeviceIdEditRoute
   '/ops/tier-tokens/new': typeof AppOpsTierTokensNewRoute
   '/packages/$name/$version': typeof AppPackagesNameVersionRoute
-  '/tree/revisions/$revision-id': typeof AppTreeRevisionsRevisionIdRoute
   '/devices/$device-id/': typeof AppDevicesDeviceIdIndexRoute
-  '/tree/revisions/': typeof AppTreeRevisionsIndexRoute
-  '/tree/layers/$layer/edit': typeof AppTreeLayersLayerEditRoute
-  '/tree/layers/$layer/': typeof AppTreeLayersLayerIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -219,15 +183,10 @@ export interface FileRoutesByTo {
   '/packages': typeof AppPackagesIndexRoute
   '/rollouts': typeof AppRolloutsIndexRoute
   '/secrets': typeof AppSecretsIndexRoute
-  '/tree': typeof AppTreeIndexRoute
   '/devices/$device-id/edit': typeof AppDevicesDeviceIdEditRoute
   '/ops/tier-tokens/new': typeof AppOpsTierTokensNewRoute
   '/packages/$name/$version': typeof AppPackagesNameVersionRoute
-  '/tree/revisions/$revision-id': typeof AppTreeRevisionsRevisionIdRoute
   '/devices/$device-id': typeof AppDevicesDeviceIdIndexRoute
-  '/tree/revisions': typeof AppTreeRevisionsIndexRoute
-  '/tree/layers/$layer/edit': typeof AppTreeLayersLayerEditRoute
-  '/tree/layers/$layer': typeof AppTreeLayersLayerIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -249,15 +208,10 @@ export interface FileRoutesById {
   '/_app/packages/': typeof AppPackagesIndexRoute
   '/_app/rollouts/': typeof AppRolloutsIndexRoute
   '/_app/secrets/': typeof AppSecretsIndexRoute
-  '/_app/tree/': typeof AppTreeIndexRoute
   '/_app/devices/$device-id/edit': typeof AppDevicesDeviceIdEditRoute
   '/_app/ops/tier-tokens/new': typeof AppOpsTierTokensNewRoute
   '/_app/packages/$name/$version': typeof AppPackagesNameVersionRoute
-  '/_app/tree/revisions/$revision-id': typeof AppTreeRevisionsRevisionIdRoute
   '/_app/devices/$device-id/': typeof AppDevicesDeviceIdIndexRoute
-  '/_app/tree/revisions/': typeof AppTreeRevisionsIndexRoute
-  '/_app/tree/layers/$layer/edit': typeof AppTreeLayersLayerEditRoute
-  '/_app/tree/layers/$layer/': typeof AppTreeLayersLayerIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -279,15 +233,10 @@ export interface FileRouteTypes {
     | '/packages/'
     | '/rollouts/'
     | '/secrets/'
-    | '/tree/'
     | '/devices/$device-id/edit'
     | '/ops/tier-tokens/new'
     | '/packages/$name/$version'
-    | '/tree/revisions/$revision-id'
     | '/devices/$device-id/'
-    | '/tree/revisions/'
-    | '/tree/layers/$layer/edit'
-    | '/tree/layers/$layer/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -307,15 +256,10 @@ export interface FileRouteTypes {
     | '/packages'
     | '/rollouts'
     | '/secrets'
-    | '/tree'
     | '/devices/$device-id/edit'
     | '/ops/tier-tokens/new'
     | '/packages/$name/$version'
-    | '/tree/revisions/$revision-id'
     | '/devices/$device-id'
-    | '/tree/revisions'
-    | '/tree/layers/$layer/edit'
-    | '/tree/layers/$layer'
   id:
     | '__root__'
     | '/_app'
@@ -336,15 +280,10 @@ export interface FileRouteTypes {
     | '/_app/packages/'
     | '/_app/rollouts/'
     | '/_app/secrets/'
-    | '/_app/tree/'
     | '/_app/devices/$device-id/edit'
     | '/_app/ops/tier-tokens/new'
     | '/_app/packages/$name/$version'
-    | '/_app/tree/revisions/$revision-id'
     | '/_app/devices/$device-id/'
-    | '/_app/tree/revisions/'
-    | '/_app/tree/layers/$layer/edit'
-    | '/_app/tree/layers/$layer/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -381,13 +320,6 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/tree/': {
-      id: '/_app/tree/'
-      path: '/tree'
-      fullPath: '/tree/'
-      preLoaderRoute: typeof AppTreeIndexRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/secrets/': {
@@ -488,25 +420,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppEnrollmentNewRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/tree/revisions/': {
-      id: '/_app/tree/revisions/'
-      path: '/tree/revisions'
-      fullPath: '/tree/revisions/'
-      preLoaderRoute: typeof AppTreeRevisionsIndexRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/devices/$device-id/': {
       id: '/_app/devices/$device-id/'
       path: '/devices/$device-id'
       fullPath: '/devices/$device-id/'
       preLoaderRoute: typeof AppDevicesDeviceIdIndexRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/tree/revisions/$revision-id': {
-      id: '/_app/tree/revisions/$revision-id'
-      path: '/tree/revisions/$revision-id'
-      fullPath: '/tree/revisions/$revision-id'
-      preLoaderRoute: typeof AppTreeRevisionsRevisionIdRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/packages/$name/$version': {
@@ -530,20 +448,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDevicesDeviceIdEditRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/tree/layers/$layer/': {
-      id: '/_app/tree/layers/$layer/'
-      path: '/tree/layers/$layer'
-      fullPath: '/tree/layers/$layer/'
-      preLoaderRoute: typeof AppTreeLayersLayerIndexRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/tree/layers/$layer/edit': {
-      id: '/_app/tree/layers/$layer/edit'
-      path: '/tree/layers/$layer/edit'
-      fullPath: '/tree/layers/$layer/edit'
-      preLoaderRoute: typeof AppTreeLayersLayerEditRouteImport
-      parentRoute: typeof AppRoute
-    }
   }
 }
 
@@ -563,15 +467,10 @@ interface AppRouteChildren {
   AppPackagesIndexRoute: typeof AppPackagesIndexRoute
   AppRolloutsIndexRoute: typeof AppRolloutsIndexRoute
   AppSecretsIndexRoute: typeof AppSecretsIndexRoute
-  AppTreeIndexRoute: typeof AppTreeIndexRoute
   AppDevicesDeviceIdEditRoute: typeof AppDevicesDeviceIdEditRoute
   AppOpsTierTokensNewRoute: typeof AppOpsTierTokensNewRoute
   AppPackagesNameVersionRoute: typeof AppPackagesNameVersionRoute
-  AppTreeRevisionsRevisionIdRoute: typeof AppTreeRevisionsRevisionIdRoute
   AppDevicesDeviceIdIndexRoute: typeof AppDevicesDeviceIdIndexRoute
-  AppTreeRevisionsIndexRoute: typeof AppTreeRevisionsIndexRoute
-  AppTreeLayersLayerEditRoute: typeof AppTreeLayersLayerEditRoute
-  AppTreeLayersLayerIndexRoute: typeof AppTreeLayersLayerIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -590,15 +489,10 @@ const AppRouteChildren: AppRouteChildren = {
   AppPackagesIndexRoute: AppPackagesIndexRoute,
   AppRolloutsIndexRoute: AppRolloutsIndexRoute,
   AppSecretsIndexRoute: AppSecretsIndexRoute,
-  AppTreeIndexRoute: AppTreeIndexRoute,
   AppDevicesDeviceIdEditRoute: AppDevicesDeviceIdEditRoute,
   AppOpsTierTokensNewRoute: AppOpsTierTokensNewRoute,
   AppPackagesNameVersionRoute: AppPackagesNameVersionRoute,
-  AppTreeRevisionsRevisionIdRoute: AppTreeRevisionsRevisionIdRoute,
   AppDevicesDeviceIdIndexRoute: AppDevicesDeviceIdIndexRoute,
-  AppTreeRevisionsIndexRoute: AppTreeRevisionsIndexRoute,
-  AppTreeLayersLayerEditRoute: AppTreeLayersLayerEditRoute,
-  AppTreeLayersLayerIndexRoute: AppTreeLayersLayerIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

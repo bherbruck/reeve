@@ -4,7 +4,7 @@
 Status:       Stable
 Scope:        All reeve extensions to the pinned Margo specification
 Margo pin:    spec/margo/ (submodule commit is authoritative)
-Extensions:   REV-001 .. REV-009 (index in 01-framework Section 3.5)
+Extensions:   REV-001 .. REV-010 (index in 01-framework Section 3.5)
 ```
 
 ## Abstract
@@ -21,7 +21,8 @@ also REPLACES three Margo device-facing surfaces outright
 (onboarding, device-API auth, desired-state delivery); 01-framework Section 3.8
 enumerates them — replacement is declared there, never implied
 elsewhere. Sections 4–12 define the extensions themselves,
-identified REV-001 through REV-009.
+identified REV-001 through REV-009; REV-010 (Section 11) adds the
+operator-facing fleet model over the same storage engine.
 
 ## 1. Introduction
 
@@ -109,6 +110,7 @@ protocol versions, dependencies) is its §3.5.
 | [08-packaging.md](08-packaging.md) | packaging & self-hosting, delivery endpoints | §10 (REV-007) |
 | [09-rollouts.md](09-rollouts.md) | staged rollouts, convergence target | §11 (REV-008) |
 | [10-secrets.md](10-secrets.md) | secrets | §12 (REV-009) |
+| [11-fleet-model.md](11-fleet-model.md) | operator fleet model: hierarchy, device management, deploy-to-scope, History/Undo, server tier | §11 (REV-010) |
 
 House style for every file in this directory: RFC/IETF register,
 BCP 14 (RFC 2119/8174) requirement keywords, under 1000 lines per
