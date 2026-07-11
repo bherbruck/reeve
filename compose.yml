@@ -31,7 +31,7 @@ services:
   reeve-server:
     build:
       context: .
-      dockerfile: docker/server.Dockerfile
+      dockerfile: docker/Dockerfile.server
     image: ${REEVE_IMAGE:-ghcr.io/beige/reeve-server:latest}
     restart: unless-stopped
     ports:

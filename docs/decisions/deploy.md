@@ -18,8 +18,8 @@ Part of docs/decisions/; start at [00-INDEX.md](00-INDEX.md).
   manifests, the CI build matrix, the agent package). The anti-drift
   concern that motivated hiding it is covered by the sync test, not
   by burying the file.
-- Container images build via `docker/server.Dockerfile` (multi-stage
-  UI+rust -> distroless) and `docker/agent.Dockerfile` (dev/test;
+- Container images build via `docker/Dockerfile.server` (multi-stage
+  UI+rust -> distroless) and `docker/Dockerfile.agent` (dev/test;
   docker:cli base, needs the host socket — the agent's real path is
   still the static binary + systemd unit, §10.3). The static-musl
   bare-box binaries remain the deploy/ci matrix's job.

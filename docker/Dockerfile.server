@@ -1,4 +1,4 @@
-# docker/server.Dockerfile — reeve-server container image.
+# docker/Dockerfile.server — reeve-server container image.
 #
 # Multi-stage: build the UI (node) -> embed + compile the server (rust)
 # -> ship the single binary on a minimal distroless base (glibc + CA
@@ -10,7 +10,7 @@
 # take the reliable glibc/distroless route so aws-lc/rustls builds
 # without a musl sysroot dance.
 #
-#   docker build -f docker/server.Dockerfile -t reeve-server .
+#   docker build -f docker/Dockerfile.server -t reeve-server .
 # (build context MUST be the repo root — the whole cargo workspace +
 #  .git are needed; see .dockerignore.)
 

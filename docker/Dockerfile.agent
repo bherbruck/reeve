@@ -1,4 +1,4 @@
-# docker/agent.Dockerfile — reeve-agent container image (DEV / TEST).
+# docker/Dockerfile.agent — reeve-agent container image (DEV / TEST).
 #
 # The agent's real deploy path is the static binary + systemd unit
 # (`reeve-agent install`, §10.3) on the host it manages — it is
@@ -9,7 +9,7 @@
 # based on docker:cli (compose plugin included) and MUST be given the
 # host docker socket to do anything real:
 #
-#   docker build -f docker/agent.Dockerfile -t reeve-agent .
+#   docker build -f docker/Dockerfile.agent -t reeve-agent .
 #   docker run --rm \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -v reeve-agent-data:/var/lib/reeve-agent \
