@@ -395,9 +395,15 @@ fn render_one(
         return Ok(Outcome::Updated(version));
     }
     let mut blobs: Vec<(String, Vec<u8>)> = Vec::new();
-    let (bundle_ref, bundle_digest, layer_digest) = if apps.is_empty() {
-        // Margo DeploymentBundleRef null rule: zero apps => bundle is
-        // present with the value null (reeve-types StateManifest doc).
+    // The bundle carries apps AND bundle-level config (config/**, e.g.
+    // the remote-terminal enable file). Build it whenever the render has
+    // any content beyond manifest.yaml — a config-only tree (terminal
+    // enabled, zero apps) still needs its config delivered. Only a truly
+    // empty render (manifest.yaml alone) yields the Margo null bundle.
+    let bundle_empty = out.keys().all(|k| k == "manifest.yaml");
+    let (bundle_ref, bundle_digest, layer_digest) = if bundle_empty {
+        // Margo DeploymentBundleRef null rule: nothing to deliver =>
+        // bundle is present with the value null (reeve-types StateManifest doc).
         (None, None, None)
     } else {
         let tarball = pack_bundle(&out)?;

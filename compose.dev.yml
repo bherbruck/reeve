@@ -53,12 +53,18 @@ services:
       - REEVE_SERVER=http://reeve-server:8420
       - REEVE_AGENT_CONFIG=/var/lib/reeve-agent/agent.toml
       # supplied by scripts/dev-up.sh after it mints the join token
-      - JOIN_TOKEN=${JOIN_TOKEN:?set by scripts/dev-up.sh — do not run this compose file directly}
+      # (empty default so `up reeve-server` doesn't trip on it; the
+      # entrypoint checks it before enrolling)
+      - JOIN_TOKEN=${JOIN_TOKEN:-}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -e
         if [ ! -f "$$REEVE_AGENT_CONFIG" ]; then
+          if [ -z "$$JOIN_TOKEN" ]; then
+            echo "JOIN_TOKEN is empty — start via ./scripts/dev-up.sh, not this compose file directly" >&2
+            exit 1
+          fi
           echo "enrolling this device against $$REEVE_SERVER..."
           reeve-agent enroll \
             --server "$$REEVE_SERVER" \
