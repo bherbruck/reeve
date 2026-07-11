@@ -167,6 +167,25 @@ fn upsert_current(
     device_id: &str,
     row: &CurrentStatus<'_>,
 ) -> rusqlite::Result<()> {
+    // Terminal-removed CLEARS the current row (REV-010 §11.4 move/undeploy).
+    // A deployment removed from a device's desired state converges, downs,
+    // and reports a terminal `removed`; it must then DISAPPEAR from the
+    // device's current deployments, not linger at "removed". The history
+    // stays in `status_journal` — this only touches the derived current
+    // table. The DELETE is guarded by the SAME seq-precedence rule as the
+    // upsert below, so a stale/out-of-order `removed` never wipes a newer
+    // state, and a `removed` for a (device, deployment) we never tracked is
+    // a harmless no-op (0 rows).
+    if row.state == state_str(DeploymentState::Removed) {
+        tx.execute(
+            "DELETE FROM deployment_status_current
+             WHERE device_id = ?1 AND deployment_id = ?2
+               AND ((?3 IS NOT NULL AND (seq IS NULL OR ?3 >= seq))
+                    OR (?3 IS NULL AND seq IS NULL))",
+            params![device_id, row.deployment_id, row.seq],
+        )?;
+        return Ok(());
+    }
     tx.execute(
         "INSERT INTO deployment_status_current
              (device_id, deployment_id, state, seq, observed_at, received_at, payload)
@@ -272,8 +291,15 @@ impl StatusIngest for SqliteStatusIngest {
         // one). Read back what the transaction left current.
         let after = stored_state(&conn, device_id, deployment_id).map_err(internal)?;
         drop(conn);
+        // A removal leaves `after` empty (the row was cleared); the state
+        // that actually changed is `removed`. Map that case explicitly so
+        // the UI still gets a deployment-status change for a disappearing
+        // deployment (§6.3), not silence.
         if before != after
-            && let Some(state) = after.as_deref().and_then(state_from_str)
+            && let Some(state) = after
+                .as_deref()
+                .and_then(state_from_str)
+                .or_else(|| before.as_ref().map(|_| DeploymentState::Removed))
         {
             self.events.emit(SseEvent::DeploymentStatus(DeploymentStatusEvent {
                 ts: EventHub::now_ts(),
@@ -355,7 +381,10 @@ impl StatusIngest for SqliteStatusIngest {
         for (deployment_id, prior) in &before {
             let after = stored_state(&conn, device_id, deployment_id).map_err(internal)?;
             if after != *prior
-                && let Some(state) = after.as_deref().and_then(state_from_str)
+                && let Some(state) = after
+                    .as_deref()
+                    .and_then(state_from_str)
+                    .or_else(|| prior.as_ref().map(|_| DeploymentState::Removed))
             {
                 changed.push((deployment_id.clone(), state));
             }
@@ -483,6 +512,51 @@ mod tests {
             )
             .unwrap();
         assert_eq!(state, "installed");
+    }
+
+    /// Stored current state, if any (test probe).
+    fn current(conn: &Connection, deployment_id: &str) -> Option<String> {
+        stored_state(conn, "dev-1", deployment_id).unwrap()
+    }
+
+    #[test]
+    fn terminal_removed_clears_the_current_row() {
+        // REV-010 §11.4: a device that removes an app reports terminal
+        // `removed`; the current row must DISAPPEAR, not linger at "removed".
+        let mut conn = test_conn();
+        let tx = conn.transaction().unwrap();
+        upsert(&tx, "dep-1", "installed", Some(10), Some("T10"), 100, "p10").unwrap();
+        // A later terminal removal clears it.
+        upsert(&tx, "dep-1", "removed", Some(11), Some("T11"), 200, "gone").unwrap();
+        tx.commit().unwrap();
+        assert_eq!(current(&conn, "dep-1"), None, "removed row cleared from current");
+    }
+
+    #[test]
+    fn stale_removed_does_not_clear_newer_state() {
+        // The seq-precedence rule also guards the clear: an out-of-order
+        // `removed` (lower seq) must not wipe a newer installed state.
+        let mut conn = test_conn();
+        let tx = conn.transaction().unwrap();
+        upsert(&tx, "dep-1", "installed", Some(10), Some("T10"), 100, "p10").unwrap();
+        upsert(&tx, "dep-1", "removed", Some(5), Some("T5"), 200, "stale-gone").unwrap();
+        tx.commit().unwrap();
+        assert_eq!(
+            current(&conn, "dep-1").as_deref(),
+            Some("installed"),
+            "stale removed left the newer state intact"
+        );
+    }
+
+    #[test]
+    fn removed_for_untracked_deployment_is_a_noop() {
+        // A `removed` for a (device, deployment) we never held clears
+        // nothing and does not error (0 rows).
+        let mut conn = test_conn();
+        let tx = conn.transaction().unwrap();
+        upsert(&tx, "never", "removed", Some(1), Some("T1"), 100, "gone").unwrap();
+        tx.commit().unwrap();
+        assert_eq!(current(&conn, "never"), None);
     }
 
     #[test]

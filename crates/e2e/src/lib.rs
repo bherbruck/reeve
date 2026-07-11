@@ -240,13 +240,143 @@ impl Author {
         let first = deployments.first()?;
         first.get("state").and_then(Value::as_str).map(str::to_string)
     }
+
+    /// Every current deployment the server lists for a device (GET
+    /// /api/devices deployments[]) — the observable the removal fix
+    /// clears: after a terminal `removed`, the deployment DISAPPEARS here.
+    pub async fn device_deployments(&self, device_id: &str) -> Vec<Value> {
+        let devices = self.devices().await;
+        devices
+            .iter()
+            .find(|d| d["deviceId"] == device_id)
+            .and_then(|d| d.get("deployments"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    // ---------------------------------------------------------- raw HTTP
+
+    /// POST a JSON body; returns the status and parsed body (`Null` if
+    /// the response has no JSON body).
+    pub async fn post_json(&self, path: &str, body: &Value) -> (reqwest::StatusCode, Value) {
+        let resp = self
+            .client
+            .post(format!("{}{path}", self.base))
+            .json(body)
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let v = resp.json::<Value>().await.unwrap_or(Value::Null);
+        (status, v)
+    }
+
+    /// PATCH a JSON body; returns the status and parsed body.
+    pub async fn patch_json(&self, path: &str, body: &Value) -> (reqwest::StatusCode, Value) {
+        let resp = self
+            .client
+            .patch(format!("{}{path}", self.base))
+            .json(body)
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let v = resp.json::<Value>().await.unwrap_or(Value::Null);
+        (status, v)
+    }
+
+    /// GET; returns the status and parsed body.
+    pub async fn get_json(&self, path: &str) -> (reqwest::StatusCode, Value) {
+        let resp = self.client.get(format!("{}{path}", self.base)).send().await.unwrap();
+        let status = resp.status();
+        let v = resp.json::<Value>().await.unwrap_or(Value::Null);
+        (status, v)
+    }
+
+    /// DELETE; returns the status only.
+    pub async fn delete_status(&self, path: &str) -> reqwest::StatusCode {
+        self.client
+            .delete(format!("{}{path}", self.base))
+            .send()
+            .await
+            .unwrap()
+            .status()
+    }
+
+    // ------------------------------------------------- operator actions
+
+    /// POST /api/groups — create a fleet (parent None) or a site (parent =
+    /// a fleet id). Returns the status and body (the [`GroupNode`]).
+    pub async fn create_group(
+        &self,
+        kind: &str,
+        name: &str,
+        parent_id: Option<i64>,
+    ) -> (reqwest::StatusCode, Value) {
+        self.post_json("/api/groups", &json!({ "kind": kind, "name": name, "parentId": parent_id }))
+            .await
+    }
+
+    /// GET /api/groups — the fleet->site containment tree.
+    pub async fn groups(&self) -> Value {
+        self.get_json("/api/groups").await.1
+    }
+
+    /// PATCH /api/groups/{id} — rename. Status + body.
+    pub async fn rename_group(&self, id: i64, name: &str) -> (reqwest::StatusCode, Value) {
+        self.patch_json(&format!("/api/groups/{id}"), &json!({ "name": name })).await
+    }
+
+    /// PATCH /api/devices/{id} — partial device update. Status + detail.
+    pub async fn patch_device(&self, id: &str, body: Value) -> (reqwest::StatusCode, Value) {
+        self.patch_json(&format!("/api/devices/{id}"), &body).await
+    }
+
+    /// POST /api/deploy — deploy a stack to a scope. Status + body.
+    pub async fn deploy(&self, stack: Value, scope: Value) -> (reqwest::StatusCode, Value) {
+        self.post_json("/api/deploy", &json!({ "stack": stack, "scope": scope })).await
+    }
+
+    /// POST /api/undeploy — remove a stack from a scope. Status + body.
+    pub async fn undeploy(&self, stack: Value, scope: Value) -> (reqwest::StatusCode, Value) {
+        self.post_json("/api/undeploy", &json!({ "stack": stack, "scope": scope })).await
+    }
+
+    /// POST /api/devices/{id}/decommission — revoke + tombstone.
+    pub async fn decommission(&self, id: &str) -> reqwest::StatusCode {
+        self.post_json(&format!("/api/devices/{id}/decommission"), &json!({})).await.0
+    }
+
+    /// GET /api/history — the human change log, newest first.
+    pub async fn history(&self) -> Vec<Value> {
+        self.get_json("/api/history").await.1.as_array().cloned().unwrap_or_default()
+    }
+
+    /// POST /api/history/{id}/undo. Status + body.
+    pub async fn undo(&self, id: i64) -> (reqwest::StatusCode, Value) {
+        self.post_json(&format!("/api/history/{id}/undo"), &json!({})).await
+    }
+
+    /// Device-auth manifest poll with a bearer token — the surface a
+    /// decommissioned credential is cut off from (401). Returns the
+    /// raw status.
+    pub async fn manifest_poll_status(&self, token: &str) -> reqwest::StatusCode {
+        self.client
+            .get(format!("{}/api/reeve/v1/manifest", self.base))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status()
+    }
 }
 
-/// Author the canonical single-app compose package + fleet layer used
-/// by the core-loop tests (the same shape desired-state's table tests
-/// pin). `greeting` flows into the rendered compose env.
-pub async fn author_web_app(author: &Author) {
-    const MANIFEST: &str = "\
+/// The canonical single-app compose package manifest (the shape
+/// desired-state's table tests pin). `greeting` flows into the rendered
+/// compose env. `{id}` is templated so a second, distinctly-named stack
+/// can be vendored for multi-app tests.
+pub const WEB_MANIFEST: &str = "\
 apiVersion: margo.org/v1-alpha1
 kind: ApplicationDescription
 metadata:
@@ -271,12 +401,37 @@ parameters:
       - pointer: ENV.GREETING
         components: [\"web-stack\"]
 ";
-    const COMPOSE: &str = "\
+
+pub const WEB_COMPOSE: &str = "\
 services:
   web:
     image: ${REEVE_REGISTRY}/nginx:1.25
 ";
-    author.put_package("web", "1.0.0", &[("margo.yaml", MANIFEST), ("compose.yml", COMPOSE)]).await;
+
+/// Vendor just the `web` package (no layer): the stack a deploy-to-scope
+/// authors. Use with [`Author::deploy`].
+pub async fn vendor_web(author: &Author) {
+    author
+        .put_package("web", "1.0.0", &[("margo.yaml", WEB_MANIFEST), ("compose.yml", WEB_COMPOSE)])
+        .await;
+}
+
+/// Vendor a second, distinctly-named single-service package (`id`) so a
+/// test can deploy TWO stacks and tell them apart in FakeProvider up/down
+/// records (the dir name is `id`).
+pub async fn vendor_named(author: &Author, id: &str) {
+    let manifest = WEB_MANIFEST.replace("id: web", &format!("id: {id}"));
+    let compose = format!("services:\n  {id}:\n    image: ${{REEVE_REGISTRY}}/nginx:1.25\n");
+    author
+        .put_package(id, "1.0.0", &[("margo.yaml", &manifest), ("compose.yml", &compose)])
+        .await;
+}
+
+/// Author the canonical single-app compose package + base (`00-all`)
+/// layer used by the core-loop tests. `greeting` flows into the rendered
+/// compose env.
+pub async fn author_web_app(author: &Author) {
+    vendor_web(author).await;
     author
         .put_layer(
             "00-all",
