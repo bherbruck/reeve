@@ -92,6 +92,14 @@ Margo sandbox). If either is empty, run `git submodule update --init
   Query for ALL server state, TanStack Table for tabular views.
   shadcn/ui + tailwind for components. No other state or routing
   libraries without asking.
+- The FULL shadcn/ui registry is vendored in ui/src/components/ui/.
+  Prefer an official shadcn component over hand-rolling — check the
+  registry first (it has Combobox, Collapsible, native-select, Empty,
+  Sonner, etc.; there is NO Tree component — build trees from nested
+  Collapsible). Files in ui/src/components/ui/ are PRISTINE primitives:
+  NEVER edit them (keeps them upgradeable). To customize, make a
+  wrapper/copy under ui/src/components/ and edit that, never the
+  ui/ primitive.
 - API types are GENERATED: axum routes annotated with utoipa ->
   openapi.json -> ui/src/api/ (generated client + React Query hooks).
   Never hand-write API types in TS. Regenerate after any route change.
