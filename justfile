@@ -36,3 +36,19 @@ conformance:
 build:
     cd ui && npm run build
     cargo build --release -p reeve-server
+
+# Local dev fleet: one server + N virtual devices, fully auto-setup
+# (admin created, remote terminal enabled, devices enrolled). Then open
+# http://localhost:8420 (admin / reeve-dev). Default 3 devices:
+#   just dev-up        # 3 devices
+#   just dev-up 5      # 5 devices
+dev-up N="3":
+    ./scripts/dev-up.sh {{N}}
+
+# Tear the dev fleet down (volumes included).
+dev-down:
+    ./scripts/dev-down.sh
+
+# Follow the dev fleet logs.
+dev-logs:
+    docker compose -f compose.dev.yml logs -f
