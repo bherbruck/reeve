@@ -55,10 +55,31 @@ use tracing::{debug, info, warn};
 
 use crate::ext::channel::{SubChannelConsumer, SubChannelHandler, SubChannelRegistry, SubChannelTx};
 
-/// Default shell when enablement names none (§5.3: the identity and
-/// program come from enablement config; `/bin/sh` is the portable
-/// floor).
+/// Portable fallback shell — present on essentially every Linux box
+/// (§5.3: `/bin/sh` is the floor).
 pub const DEFAULT_SHELL: &str = "/bin/sh";
+
+/// Shells preferred over the `/bin/sh` floor when enablement config
+/// names no explicit shell. First one that exists on the device wins;
+/// `/bin/sh` is the guaranteed fallback.
+const PREFERRED_SHELLS: &[&str] = &["/bin/bash", "/usr/bin/bash"];
+
+/// Resolve the shell to spawn: the enablement config's explicit `shell`
+/// if set (per-scope — a fleet/site/device layer may set it, §11.1);
+/// otherwise a nicer shell (bash) if the device has one, else the
+/// portable `/bin/sh` floor.
+fn resolve_shell(config: &TerminalConfig) -> String {
+    if let Some(s) = config.shell.as_deref()
+        && !s.trim().is_empty()
+    {
+        return s.to_string();
+    }
+    PREFERRED_SHELLS
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| DEFAULT_SHELL.to_string())
+}
 
 /// Watchdog tick for the §5.3 idle/hard-cap limits — granularity,
 /// not a protocol value.
@@ -287,7 +308,7 @@ fn spawn_session(
         })
         .map_err(|e| format!("cannot open pty: {e}"))?;
 
-    let shell = config.shell.clone().unwrap_or_else(|| DEFAULT_SHELL.to_string());
+    let shell = resolve_shell(config);
     let mut cmd = CommandBuilder::new(&shell);
     cmd.env("TERM", meta.term.as_deref().unwrap_or("xterm-256color"));
     let mut child = pty
@@ -505,6 +526,28 @@ mod tests {
     use crate::ext::channel::{Outgoing, test_sub_channel};
     use reeve_types::reeve::channel::decode_data_frame;
     use tokio_tungstenite::tungstenite::Message;
+
+    #[test]
+    fn resolve_shell_prefers_explicit_then_bash_then_sh() {
+        // Explicit config shell always wins (per-scope override, §11.1).
+        let mut cfg = TerminalConfig { shell: Some("/usr/bin/fish".into()), ..Default::default() };
+        assert_eq!(resolve_shell(&cfg), "/usr/bin/fish");
+        // Blank/whitespace is treated as unset.
+        cfg.shell = Some("   ".into());
+        let resolved = resolve_shell(&cfg);
+        assert!(resolved != "   ");
+        // No explicit shell: bash if the device has it, else /bin/sh —
+        // and always a real, present interpreter.
+        cfg.shell = None;
+        let auto = resolve_shell(&cfg);
+        let bash_present = PREFERRED_SHELLS.iter().any(|p| std::path::Path::new(p).exists());
+        if bash_present {
+            assert!(PREFERRED_SHELLS.contains(&auto.as_str()), "should pick bash when present: {auto}");
+        } else {
+            assert_eq!(auto, DEFAULT_SHELL);
+        }
+        assert!(std::path::Path::new(&auto).exists(), "resolved shell must exist: {auto}");
+    }
 
     fn enabled_config() -> TerminalConfig {
         TerminalConfig {
