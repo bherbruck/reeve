@@ -12,6 +12,8 @@ pub mod federation;
 // feature `embedded-agents` verbatim; boundary rules are identical.
 #[cfg(feature = "embedded-agents")]
 pub mod install;
+#[cfg(feature = "ext-logs")]
+pub mod logs;
 #[cfg(feature = "ext-rollouts")]
 pub mod rollouts;
 #[cfg(feature = "ext-secrets")]

@@ -120,6 +120,16 @@ const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "location_groups",
         sql: include_str!("migrations/V11__location_groups.sql"),
     },
+    // Deploy-log storage (REV-011, server ext-logs): content-addressed
+    // compose up/down output per deployment. Schema exists regardless of
+    // the ext-logs feature (same rule as V6..V9): stable across feature
+    // sets so a --no-default-features binary can restore a target written
+    // by a full one. The feature gates only the LogStore module + routes.
+    EmbeddedMigration {
+        version: 12,
+        name: "deploy_logs",
+        sql: include_str!("migrations/V12__deploy_logs.sql"),
+    },
 ];
 
 /// Open the server DB with the D6 pragmas. Idempotent.

@@ -10,7 +10,7 @@ license.workspace = true
 # extension, all default-ON. Core (poll, pull, converge, compose
 # provider, status) never depends on ext items — the
 # --no-default-features build is the compiler-enforced proof.
-default = ["ext-secrets", "ext-channel", "ext-terminal", "ext-health"]
+default = ["ext-secrets", "ext-channel", "ext-terminal", "ext-health", "ext-logs"]
 # REV-009 secrets: resolve-endpoint fetch + per-service env
 # materialization (spec/reeve/10-secrets.md §12.3).
 ext-secrets = []
@@ -30,6 +30,12 @@ ext-terminal = ["ext-channel", "dep:portable-pty"]
 # (statvfs, §7.2) became an unconditional dependency with B8 — the
 # core installer needs geteuid; see [dependencies].
 ext-health = ["dep:httpdate"]
+# REV-011 deploy logs: capture combined `docker compose up`/`down`
+# output and upload it to POST /api/reeve/v1/devices/{id}/logs
+# (spec/reeve/01-framework.md §3.1; the reeve-server ext-logs seam).
+# No new deps — reqwest (upload) and reeve-types (wire body) are
+# already core deps. Whole module: src/ext/logs.rs.
+ext-logs = []
 
 [dependencies]
 reeve-types = { path = "../reeve-types" }

@@ -96,6 +96,16 @@ pub fn bootstrap(cfg: Config) -> anyhow::Result<AppState> {
         None => ownership::Ownership::Root,
     };
 
+    // REV-011 deploy-log store (ext-logs): bound BEFORE the struct
+    // literal because `db` and `cfg` are moved into it below. The
+    // SqliteLogStore over THE writer connection; a config-selected
+    // LokiLogStore would be constructed here instead, no route changes.
+    #[cfg(feature = "ext-logs")]
+    let logs: Arc<dyn ext::logs::LogStore> = Arc::new(ext::logs::SqliteLogStore::new(
+        db.clone(),
+        cfg.logs_retain_per_deployment,
+    ));
+
     let state = AppState {
         cfg: Arc::new(cfg),
         db,
@@ -117,6 +127,8 @@ pub fn bootstrap(cfg: Config) -> anyhow::Result<AppState> {
         events: events::EventHub::new(),
         channels: channels::Channels::new(),
         zot,
+        #[cfg(feature = "ext-logs")]
+        logs,
     };
 
     // Terminal audit finalization (spec/reeve/03-terminal.md §5.4,

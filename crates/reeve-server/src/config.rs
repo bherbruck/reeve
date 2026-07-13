@@ -50,6 +50,10 @@
 //!   artifact pulls skip the enrollment-token requirement (trusted
 //!   networks only). Default: closed.
 //!
+//! Deploy logs (REV-011, server `ext-logs`):
+//! - REEVE_LOGS_RETAIN_PER_DEPLOYMENT  recent log runs kept per
+//!   (device, deployment); older pruned on insert. Default 10.
+//!
 //! - REEVE_UPSTREAM               parent tier base URL; present =>
 //!   this instance is a gateway tier, absent => root (unchanged)
 //! - REEVE_UPSTREAM_TOKEN         tier credential presented upstream
@@ -139,6 +143,11 @@ pub struct Config {
     /// on trusted networks. Parsed unconditionally, consumed only by
     /// `embedded-agents` builds. Default false — closed.
     pub install_open: bool,
+    /// REV-011 deploy logs (server `ext-logs`): how many recent log
+    /// runs to retain per (device, deployment) — older ones are pruned
+    /// on insert (REEVE_LOGS_RETAIN_PER_DEPLOYMENT, default 10). Parsed
+    /// unconditionally, consumed only by the `ext-logs` LogStore.
+    pub logs_retain_per_deployment: u64,
     /// Optional first-boot admin seed (REEVE_ADMIN_USER +
     /// REEVE_ADMIN_PASSWORD). When both are set and the users table is
     /// empty, password-mode bootstrap creates this admin instead of
@@ -330,6 +339,16 @@ impl Config {
             Some(other) => bail!("REEVE_INSTALL_OPEN must be true|false, got {other:?}"),
         };
 
+        let logs_retain_per_deployment: u64 = match get("REEVE_LOGS_RETAIN_PER_DEPLOYMENT") {
+            Some(v) => v
+                .parse()
+                .context("REEVE_LOGS_RETAIN_PER_DEPLOYMENT must be an integer")?,
+            None => 10,
+        };
+        if logs_retain_per_deployment == 0 {
+            bail!("REEVE_LOGS_RETAIN_PER_DEPLOYMENT must be positive");
+        }
+
         let admin_seed = match (get("REEVE_ADMIN_USER"), get("REEVE_ADMIN_PASSWORD")) {
             (Some(u), Some(p)) => Some((u, p)),
             (Some(_), None) | (None, Some(_)) => {
@@ -349,6 +368,7 @@ impl Config {
             zot,
             federation,
             install_open,
+            logs_retain_per_deployment,
             admin_seed,
         })
     }
@@ -723,6 +743,19 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn logs_retain_defaults_to_ten() {
+        assert_eq!(cfg(&[]).unwrap().logs_retain_per_deployment, 10);
+        assert_eq!(
+            cfg(&[("REEVE_LOGS_RETAIN_PER_DEPLOYMENT", "3")])
+                .unwrap()
+                .logs_retain_per_deployment,
+            3
+        );
+        assert!(cfg(&[("REEVE_LOGS_RETAIN_PER_DEPLOYMENT", "0")]).is_err());
+        assert!(cfg(&[("REEVE_LOGS_RETAIN_PER_DEPLOYMENT", "nope")]).is_err());
     }
 
     #[test]

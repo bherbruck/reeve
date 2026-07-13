@@ -16,6 +16,7 @@ import {
   getJournalQueryKey,
   getListQueryKey,
 } from '@/api/endpoints/devices/devices'
+import { getListDeployLogsQueryKey } from '@/api/endpoints/logs/logs'
 import { getDurabilityStatusQueryKey } from '@/api/endpoints/durability/durability'
 import {
   getFederationStatusQueryKey,
@@ -100,6 +101,12 @@ const handlers: Record<string, Handler> = {
     invalidateDevice(qc, e.deviceId)
     // Prefix-invalidates every loaded journal page for the device.
     void qc.invalidateQueries({ queryKey: getJournalQueryKey(e.deviceId) })
+    // Prefix-invalidates the deploy-log list for every deployment on
+    // the device (the key omits the `deployment` param), so a fresh
+    // failure surfaces its captured output without a manual reload.
+    void qc.invalidateQueries({
+      queryKey: getListDeployLogsQueryKey(e.deviceId),
+    })
   },
   'health-state': (qc, data) => {
     const e = parse<HealthStateEvent>(data)

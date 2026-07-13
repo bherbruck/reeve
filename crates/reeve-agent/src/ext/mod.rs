@@ -15,6 +15,8 @@
 pub mod channel;
 #[cfg(feature = "ext-health")]
 pub mod health;
+#[cfg(feature = "ext-logs")]
+pub mod logs;
 #[cfg(feature = "ext-secrets")]
 pub mod secrets;
 #[cfg(feature = "ext-terminal")]

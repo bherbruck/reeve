@@ -53,6 +53,11 @@ pub struct AppState {
     /// iff `REEVE_ZOT_URL` is configured. `None` => non-native /v2
     /// repos 404 (proxy absent, zot_proxy.rs).
     pub zot: Option<crate::zot_proxy::ZotProxy>,
+    /// REV-011 deploy-log store (ext-logs): THE seam — `SqliteLogStore`
+    /// by default, a future `LokiLogStore` without touching any caller
+    /// (ext/logs.rs). Absent in a core build (the routes are gated too).
+    #[cfg(feature = "ext-logs")]
+    pub logs: std::sync::Arc<dyn crate::ext::logs::LogStore>,
 }
 
 impl AppState {

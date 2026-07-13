@@ -104,6 +104,7 @@ it; anything else is feature-unavailable (Section 3.2).
 | REV-007 | Packaging & Self-Hosting | [10](#10-packaging--self-hosting-rev-007) | — (server/agent-local) | REV-006 |
 | REV-008 | Staged Rollouts | [11](#11-staged-rollouts-rev-008) | — (WFM-internal) | REV-001, REV-003, REV-004, REV-005 |
 | REV-009 | Secrets | [12](#12-secrets-rev-009) | rev-009/1 | REV-001, REV-004, REV-005 |
+| REV-011 | Deploy-log capture | [05 §7.7](05-health-journal.md#77-deploy-log-capture-rev-011-ext-logs) | rev-011/1 | REV-004 |
 
 Extensions with protocol `—` define no agent↔server wire protocol;
 they are internal behavior and need no capability advertisement.
@@ -148,6 +149,7 @@ vanilla tooling never sees.
 | render bundle (§3.8 item 3, docs/decisions/tree-render.md D2) | `ApplicationDescription` + `ApplicationDeployment` formats | consumer: wire-exact files emitted per app dir | artifacts emitted verbatim, not format changes |
 | REV-008 (09-rollouts §11.3) | `DeploymentStatusManifest` state enum | read-only gate input | reads only |
 | REV-009 (10-secrets §12, docs/decisions/secrets.md D15) | `ApplicationDeployment` parameter values | value convention: a secret-typed parameter's `value` is the reference string `${secret:<name>}`, substituted agent-side at apply | syntactically valid per the pinned schema (parameter values are plain strings — DesiredState-001.yaml); no field added, renamed, or retyped; vanilla tooling sees a well-formed manifest |
+| REV-011 (05-health-journal §7.7) | `DeploymentStatus.error` | none — reads it as the one-line reason; full logs live only on new reeve endpoints | no Margo surface written; the one-liner stays authoritative and unchanged |
 
 Margo's device-gateway concepts (opaque/see-thru,
 `device-capabilities.md` "Gateways considerations") are untouched by

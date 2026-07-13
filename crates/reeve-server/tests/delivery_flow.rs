@@ -40,6 +40,7 @@ fn config(data_dir: &FsPath) -> Config {
         federation: None,
         install_open: false,
         admin_seed: None,
+        logs_retain_per_deployment: 10,
     }
 }
 

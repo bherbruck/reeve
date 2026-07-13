@@ -6,10 +6,12 @@ state, test counts, the end-to-end evidence, and the exact commands to
 run the full stack on this machine.
 
 Status: **all tracks A–E complete and green, plus the operator fleet
-model (REV-010) and fleet→site containment (REV-011).**
-`cargo test --workspace` = **553 passed, 0 failed**. Clippy clean,
-`just standalone` green, UI builds, generated API client in sync
-(regeneration idempotent), conformance (core-only) e2e passes.
+model + fleet→site containment (REV-010) and per-deployment compose-log
+capture (REV-011, `ext-logs`).**
+`cargo test --workspace` = **594 passed, 0 failed**. Clippy clean
+(default AND `--no-default-features`), `just standalone` green, UI
+builds, generated API client in sync (regeneration idempotent),
+conformance (core-only, `ext-logs` compiled out) e2e passes.
 `BLOCKERS.md` is empty.
 
 ---
@@ -18,12 +20,12 @@ model (REV-010) and fleet→site containment (REV-011).**
 
 | Gate | Command | Result |
 |---|---|---|
-| Workspace tests | `cargo test --workspace` | **553 passed, 0 failed** (+11 from REV-011: `groups.rs` 6 unit + `groups_flow.rs` 5 integration) |
+| Workspace tests | `cargo test --workspace` | **594 passed, 0 failed** (incl. REV-011 `ext-logs`: server `ext::logs` units + `logs_flow.rs` 5 integration, agent `ext::logs` + provider-capture units, reeve-types `logs` round-trips, and `e2e/tests/deploy_logs.rs` 3 end-to-end) |
 | Every crate stands alone (Law 2) | `just standalone` | pass (7 crates build alone; `e2e` also builds alone) |
-| Lint | `cargo clippy --workspace --all-targets` | **clean** — 0 warnings |
+| Lint | `cargo clippy --workspace --all-targets` | **clean** — 0 warnings (also clean `--no-default-features` on `reeve-server`/`reeve-agent`/`e2e`) |
 | UI build | `cd ui && npm run build` | pass (`✓ built`, dist emitted) |
-| API drift (D10) | `just check-api-drift` | generated client **in sync** — `gen-api` is idempotent (re-run touches nothing). The gate's `git diff` flags the new `groups` client + openapi additions only because this build is uncommitted, not a real drift. |
-| Conformance (E2) | `just conformance` (server+agent `--no-default-features` + `cargo test -p e2e --no-default-features`) | pass — core loop runs with EVERY extension compiled out |
+| API drift (D10) | `just check-api-drift` | `gen-api` is idempotent; the gate's `git diff` flags ONLY the new deploy-log surface — three paths (`POST /api/reeve/v1/devices/{id}/logs`, `GET /api/devices/{id}/logs`, `GET .../logs/{log_id}`) + their models — because those generated files are uncommitted, not a real drift. |
+| Conformance (E2) | `just conformance` (server+agent `--no-default-features` + `cargo test -p e2e --no-default-features`) | pass — core loop runs with EVERY extension (incl. `ext-logs`) compiled out; `deploy_logs.rs` is `#![cfg(feature="ext")]` so it is not compiled there, proving additivity |
 
 Clippy note: no warnings at all in this run (the only ever-permitted
 one is the `ui/dist` build-script notice, which did not fire here).
@@ -228,6 +230,9 @@ convergence assertions read.
 | `server_startup_reconciles_unrendered_commit_then_agent_pulls` | server killed between commit and render; next boot reconciles; real agent pulls the healed render | core |
 | `restore_bumps_epoch_and_agent_accepts_what_would_be_a_rollback` | snapshot → advance agent floor → restore OLDER snapshot → epoch fences → agent accepts a counter BELOW its floor as a NOTABLE bump, not a rejected rollback | core |
 | `rotation_reups_only_the_consuming_app` | secret rotation bumps only the consumer's `secrets_version`, bundle digest unchanged, agent re-ups ONLY that app | ext-secrets |
+| `failed_deploy_uploads_log_and_operator_reads_failure_text` | provider's `up` FAILS with captured output; agent uploads the deploy log; operator `GET`s the list + reads the FULL failure text — while Margo status still shows `failed` | ext-logs |
+| `successful_deploy_also_stores_a_log` | a converging apply also stores an `applied`/`up` log (latest-wins forensic record) | ext-logs |
+| `retention_keeps_at_most_n_deploy_logs` | a persistently-erroring app re-applies every pass; the server retains at most N=3 newest per (device, deployment) | ext-logs |
 | `capabilities_reflect_the_compiled_feature_set` | advertisement derived from compiled features (core build advertises zero ext-*; full build advertises them) | both |
 | `core_loop_runs_with_current_feature_set` | conformance headline: the base loop runs under whatever feature set it was built with | both |
 
@@ -249,11 +254,28 @@ test core_loop_runs_with_current_feature_set ... ok
 test result: ok. 11 passed; 0 failed
 ```
 
-Conformance build (`cargo test -p e2e --no-default-features`): 10
-tests pass (rotation is ext-gated out); the core loop, all three
-chaos scenarios, and the epoch-restore fencing run with **every
-extension compiled out** — proving no extension is load-bearing for
-the base loop.
+Conformance build (`cargo test -p e2e --no-default-features`): the
+`ext`-gated scenarios (rotation, the three `deploy_logs.rs` cases) are
+compiled OUT; the core loop, all three chaos scenarios, and the
+epoch-restore fencing run with **every extension compiled out** —
+proving no extension is load-bearing for the base loop.
+
+REV-011 deploy-log e2e (`cargo test -p e2e --test deploy_logs`):
+
+```
+test failed_deploy_uploads_log_and_operator_reads_failure_text ... ok
+test successful_deploy_also_stores_a_log ... ok
+test retention_keeps_at_most_n_deploy_logs ... ok
+
+test result: ok. 3 passed; 0 failed
+```
+
+The harness gained an `ext-logs` seam mirroring the binary: `FakeProvider`
+now CAPTURES combined output (`error_app` models a non-zero `up`,
+`fail_app` an unhealthy container, `set_output` supplies the text), and
+`TestAgent::tick` runs `reeve_agent::ext::logs::record_logs` after
+`record_reports` — exactly where `reeve-agent/src/main.rs` runs it —
+behind the e2e `ext` feature so the conformance build still compiles.
 
 #### E1 scenarios covered by the existing in-crate integration suites
 

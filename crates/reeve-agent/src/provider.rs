@@ -17,6 +17,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 
 use reeve_types::margo::status::DeploymentState;
 use serde::Deserialize;
@@ -27,6 +28,49 @@ use serde::Deserialize;
 #[derive(Debug, thiserror::Error)]
 #[error("provider: {0}")]
 pub struct ProviderError(pub String);
+
+/// Tail cap for a captured compose lifecycle run — the last ~256 KiB
+/// of combined `up`/`down` output. Compose output can be large (image
+/// pulls, build logs); we keep the TAIL because the failure is almost
+/// always at the end. Well under the server's 512 KiB accept cap
+/// (spec/reeve/01-framework.md; ext-logs REV-011), so a captured run
+/// always fits one upload.
+pub const CAPTURE_TAIL_BYTES: usize = 256 * 1024;
+
+/// The COMBINED stdout+stderr of one `docker compose up`/`down`
+/// attempt, captured for the ext-logs extension (REV-011). This is
+/// best-effort, transient debug state — it lives only in the provider's
+/// interior slot until converge harvests it in the same pass, and it is
+/// never load-bearing for convergence (a lost capture changes nothing;
+/// Law 3 recovery re-runs the phase, not the log). The Margo one-line
+/// reason still rides in [`ProviderError`] unchanged (additive).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CapturedRun {
+    /// `true` = this was an `up` (apply); `false` = a `down` (remove).
+    pub phase_up: bool,
+    /// Combined stdout+stderr, tail-clipped to [`CAPTURE_TAIL_BYTES`].
+    pub combined: String,
+    /// Process exit code when the child ran (`None` if it could not be
+    /// spawned — e.g. no docker on PATH).
+    pub exit_code: Option<i32>,
+    /// `true` when [`combined`](Self::combined) was clipped.
+    pub truncated: bool,
+    /// Whether the invocation exited zero.
+    pub success: bool,
+}
+
+/// Keep the last `max` bytes of `s`, snapped to a char boundary.
+/// Returns `(clipped, truncated)`.
+fn tail_clip(s: &str, max: usize) -> (String, bool) {
+    if s.len() <= max {
+        return (s.to_string(), false);
+    }
+    let mut start = s.len() - max;
+    while start < s.len() && !s.is_char_boundary(start) {
+        start += 1;
+    }
+    (s[start..].to_string(), true)
+}
 
 /// Post-action workload status, already mapped to Margo's deployment
 /// state vocabulary (`deployment-status.md` "Status Attributes";
@@ -68,6 +112,20 @@ pub trait Provider {
     /// a real compose implementation needs per-container `docker
     /// inspect` and can land without touching the trait.
     fn restart_counts(&self) -> Option<std::collections::BTreeMap<String, u64>> {
+        None
+    }
+
+    /// Take (and clear) the combined output captured by the most recent
+    /// `apply`/`remove` call — the ext-logs seam (REV-011). Converge
+    /// harvests this immediately after each attempt and hands it to the
+    /// ext-logs hook; a provider that captures nothing returns `None`
+    /// (the default) and the extension simply has no log to store —
+    /// convergence is identical either way (§3.2 degradation).
+    ///
+    /// Best-effort by contract: this is NOT convergence state (Law 3),
+    /// so implementations keeping it in RAM is fine — a crash loses at
+    /// most the last unsent log, never resumability.
+    fn take_capture(&self) -> Option<CapturedRun> {
         None
     }
 }
@@ -193,6 +251,11 @@ pub struct CommandComposeProvider {
     /// tests point this at a stub script that records argv and emits
     /// canned `ps` JSON (tests MUST NOT require docker).
     program: PathBuf,
+    /// Interior slot holding the combined output of the most recent
+    /// `up`/`down` (the ext-logs capture, REV-011). Overwritten each
+    /// lifecycle run; `take_capture` drains it. NOT convergence state
+    /// (see [`Provider::take_capture`]).
+    last_capture: Mutex<Option<CapturedRun>>,
 }
 
 impl CommandComposeProvider {
@@ -200,6 +263,7 @@ impl CommandComposeProvider {
         CommandComposeProvider {
             base_dir: base_dir.to_path_buf(),
             program: PathBuf::from("docker"),
+            last_capture: Mutex::new(None),
         }
     }
 
@@ -247,6 +311,69 @@ impl CommandComposeProvider {
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
+
+    /// Run one compose LIFECYCLE invocation (`up`/`down`), recording the
+    /// COMBINED stdout+stderr into [`last_capture`](Self::last_capture)
+    /// for the ext-logs extension (REV-011), then returning the SAME
+    /// `Result<stdout, ProviderError(stderr)>` shape `run` does — so the
+    /// Margo one-line reason path is unchanged (additive). `ps` still
+    /// goes through [`run`](Self::run) and never overwrites a capture,
+    /// so a failed `up` leaves its own output in the slot.
+    fn run_lifecycle(&self, args: &[String], phase_up: bool) -> Result<String, ProviderError> {
+        match Command::new(&self.program)
+            .args(args)
+            .current_dir(&self.base_dir)
+            .output()
+        {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // Combine stdout then stderr (compose writes most
+                // progress to stderr); ensure a line break between them.
+                let mut combined = String::with_capacity(stdout.len() + stderr.len() + 1);
+                combined.push_str(&stdout);
+                if !stdout.is_empty() && !stdout.ends_with('\n') && !stderr.is_empty() {
+                    combined.push('\n');
+                }
+                combined.push_str(&stderr);
+                let (combined, truncated) = tail_clip(&combined, CAPTURE_TAIL_BYTES);
+                let success = output.status.success();
+                if let Ok(mut slot) = self.last_capture.lock() {
+                    *slot = Some(CapturedRun {
+                        phase_up,
+                        combined,
+                        exit_code: output.status.code(),
+                        truncated,
+                        success,
+                    });
+                }
+                if !success {
+                    return Err(ProviderError(format!(
+                        "`docker {}` failed ({}): {}",
+                        args.join(" "),
+                        output.status,
+                        stderr.trim()
+                    )));
+                }
+                Ok(stdout.into_owned())
+            }
+            Err(e) => {
+                // Could not spawn docker at all: still record a capture
+                // so the operator sees the spawn error, not silence.
+                let msg = format!("cannot run {}: {e}", self.program.display());
+                if let Ok(mut slot) = self.last_capture.lock() {
+                    *slot = Some(CapturedRun {
+                        phase_up,
+                        combined: msg.clone(),
+                        exit_code: None,
+                        truncated: false,
+                        success: false,
+                    });
+                }
+                Err(ProviderError(msg))
+            }
+        }
+    }
 }
 
 impl Provider for CommandComposeProvider {
@@ -258,7 +385,7 @@ impl Provider for CommandComposeProvider {
     fn apply(&self, app_dir: &Path) -> Result<AppStatus, ProviderError> {
         let project = Self::project_name(app_dir)?;
         let file = self.compose_file(app_dir);
-        self.run(&up_args(&file, &project))?;
+        self.run_lifecycle(&up_args(&file, &project), true)?;
         match self.run(&ps_args(&file, &project)) {
             Ok(out) => match map_ps_json(&out) {
                 Ok(state) => Ok(AppStatus { state, detail: None }),
@@ -278,7 +405,7 @@ impl Provider for CommandComposeProvider {
     fn remove(&self, retained_dir: &Path) -> Result<(), ProviderError> {
         let project = Self::project_name(retained_dir)?;
         let file = self.compose_file(retained_dir);
-        self.run(&down_args(&file, &project))?;
+        self.run_lifecycle(&down_args(&file, &project), false)?;
         Ok(())
     }
 
@@ -290,6 +417,10 @@ impl Provider for CommandComposeProvider {
             state: map_ps_json(&out)?,
             detail: None,
         })
+    }
+
+    fn take_capture(&self) -> Option<CapturedRun> {
+        self.last_capture.lock().ok().and_then(|mut s| s.take())
     }
 }
 
@@ -378,10 +509,15 @@ mod tests {
              here=$(dirname \"$0\")\n\
              echo \"$@\" >> \"$here/argv.log\"\n\
              if [ -f \"$here/exit-code\" ]; then\n\
+               echo \"stub stdout before failure\"\n\
                echo \"stub docker error\" >&2\n\
                exit \"$(cat \"$here/exit-code\")\"\n\
              fi\n\
-             case \" $* \" in *\" ps \"*) cat \"$here/ps.json\";; esac\n\
+             case \" $* \" in\n\
+               *\" up \"*) echo \"stub up stdout line\";;\n\
+               *\" down \"*) echo \"stub down stdout line\";;\n\
+               *\" ps \"*) cat \"$here/ps.json\";;\n\
+             esac\n\
              exit 0\n",
         )
         .unwrap();
@@ -422,6 +558,61 @@ mod tests {
                 "compose -f apps/web/compose.yml -p web ps --format json",
             ]
         );
+        // ext-logs (REV-011): the `up` stdout was CAPTURED, not
+        // discarded, and the following `ps` did not overwrite it.
+        let cap = provider.take_capture().expect("up capture");
+        assert!(cap.phase_up);
+        assert!(cap.success);
+        assert_eq!(cap.exit_code, Some(0));
+        assert!(!cap.truncated);
+        assert!(
+            cap.combined.contains("stub up stdout line"),
+            "stdout retained in combined capture: {:?}",
+            cap.combined
+        );
+        // Drained: a second take yields nothing.
+        assert!(provider.take_capture().is_none());
+    }
+
+    #[test]
+    fn capture_retains_both_streams_on_failure_and_is_tail_clipped() {
+        let stub_dir = tempfile::tempdir().unwrap();
+        let data_dir = tempfile::tempdir().unwrap();
+        let docker = write_stub_docker(stub_dir.path());
+        fs::write(stub_dir.path().join("exit-code"), "23").unwrap();
+        let app_dir = data_dir.path().join("apps/web");
+        fs::create_dir_all(&app_dir).unwrap();
+
+        let provider = CommandComposeProvider::new(data_dir.path()).with_program(&docker);
+        let err = provider.apply(&app_dir).unwrap_err();
+        // Margo one-line reason is still stderr only (additive).
+        assert!(err.0.contains("stub docker error"));
+        // But the capture carries BOTH streams and the exit code.
+        let cap = provider.take_capture().expect("failure capture");
+        assert!(!cap.success);
+        assert_eq!(cap.exit_code, Some(23));
+        assert!(cap.combined.contains("stub stdout before failure"), "stdout");
+        assert!(cap.combined.contains("stub docker error"), "stderr");
+
+        // Tail clip keeps the last CAPTURE_TAIL_BYTES, flags truncation.
+        let big = "x".repeat(CAPTURE_TAIL_BYTES + 10_000);
+        let (clipped, truncated) = tail_clip(&big, CAPTURE_TAIL_BYTES);
+        assert!(truncated);
+        assert_eq!(clipped.len(), CAPTURE_TAIL_BYTES);
+    }
+
+    #[test]
+    fn missing_docker_still_captures_the_spawn_error() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let app_dir = data_dir.path().join("apps/web");
+        fs::create_dir_all(&app_dir).unwrap();
+        let provider = CommandComposeProvider::new(data_dir.path())
+            .with_program(Path::new("/nonexistent/reeve-test-docker"));
+        assert!(provider.apply(&app_dir).is_err());
+        let cap = provider.take_capture().expect("spawn-error capture");
+        assert!(!cap.success);
+        assert_eq!(cap.exit_code, None);
+        assert!(cap.combined.contains("cannot run"));
     }
 
     #[test]

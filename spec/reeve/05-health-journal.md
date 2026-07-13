@@ -139,3 +139,56 @@ timestamps. Section 7.3's semantics apply unchanged at every tier.
 - Journal eviction pressure is attacker-influenceable (spam samples
   to push out history); the gap-mark rule makes eviction visible.
 
+### 7.7 Deploy-log capture (REV-011, ext-logs)
+
+The Margo-native `DeploymentStatus.error` already carries the ONE-LINE
+failure reason for a deployment (Margo `deployment-status.md`); REV-011
+leaves that field untouched and adds the FULL `docker compose up`/`down`
+output an operator needs to see WHY a deploy failed beyond that one
+line. It is a reeve extension behind the `ext-logs` cargo feature
+(default on) on both the server and the agent; capability id
+`rev-011/1`.
+
+**Additivity (Section 3.1).** Deploy-log capture touches NO Margo
+surface — it defines only NEW reeve endpoints and never rides in, or
+shadows, a Margo status body:
+
+- Agent → server (device auth): `POST /api/reeve/v1/devices/{deviceId}/logs`.
+  The agent uploads its OWN captured output; the path `deviceId` MUST
+  equal the authenticated device token (else 403). Body is a
+  `DeployLogUpload` (`deploymentId`, `appId`, `outcome`
+  applied|failed|removed, `phase` up|down, `exitCode`, `truncated`,
+  `capturedAt`, `text`). Bodies over 512 KiB are rejected (413); the
+  agent tail-clips capture to 256 KiB so one run always fits.
+- Operator ← server (viewer+): `GET /api/devices/{deviceId}/logs?deployment=<id>`
+  lists log metadata newest-first; `GET /api/devices/{deviceId}/logs/{logId}`
+  reads one back (JSON `{meta,text}`, or `text/plain` on that `Accept`).
+
+A vanilla WFM/agent that never uploads is unaffected (Section 3.2
+degradation): the one-line reason still rides in the Margo status body
+regardless of whether any full log was captured.
+
+**Agent capture & offline-first (Law 5, Law 3).** The compose provider
+records the combined stdout+stderr of each `up`/`down` as a plain
+provider capability; core carries it as opaque data and only the
+`ext-logs` hook (agent binary shell, post-converge, on the same cadence
+as status reporting) reads it. Every acted-on app's output is written
+to a local file (`<data_dir>/logs/<app>.log`, atomic temp+fsync+rename,
+latest-wins) BEFORE the best-effort upload, so it survives an offline
+window and a `kill -9`. An unreachable/rejected/absent endpoint
+(`dir://` sources, unenrolled agents) is a journaled continue — NEVER a
+convergence failure. Capture is best-effort, transient debug state: a
+lost capture changes nothing; recovery re-runs the phase, not the log.
+
+**The `LogStore` seam (Loki-pluggable).** The server stores logs behind
+a single `LogStore` trait (`put`/`list`/`get`), mirroring the
+`Provider`/`Durability`/`Identity` seams. The default `SqliteLogStore`
+keeps each body as a content-addressed blob in THE shared server DB
+(Law 4) plus an index row, all in one transaction with a retention
+prune (Law 3); **retention keeps the most-recent N per
+(device, deployment)** (`logs_retain_per_deployment`, default 10),
+garbage-collecting unreferenced blobs. A future `LokiLogStore`
+implements the same trait — `put` pushes the stream to Loki, `list`/`get`
+proxy Loki queries — and drops into `AppState` with ZERO changes to the
+routes or any caller.
+

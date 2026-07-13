@@ -3,7 +3,12 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { ArrowLeft, Pencil, Pin, Rocket } from 'lucide-react'
 import { useMe } from '@/api/endpoints/auth/auth'
 import { useDetail, useJournal } from '@/api/endpoints/devices/devices'
-import type { DeviceDetail, JournalEntry } from '@/api/model'
+import type {
+  ComponentStatus,
+  DeploymentStatusManifest,
+  DeviceDetail,
+  JournalEntry,
+} from '@/api/model'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -22,11 +27,13 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { DeployLogsDialog } from '@/components/deploy-logs-dialog'
 import { DeploymentStateBadge } from '@/components/deployment-state-badge'
 import { DeviceTerminal } from '@/components/device-terminal'
 import { PresenceBadge } from '@/components/presence-badge'
 import { fmtRfc3339, fmtUnix } from '@/lib/format'
 import { usePollInterval } from '@/lib/sse'
+import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/_app/devices/$device-id/')({
   component: DeviceDetailPage,
@@ -45,9 +52,70 @@ function Mono({ children }: { children: ReactNode }) {
   return <span className="font-mono text-xs">{children}</span>
 }
 
+/** Failure reason + per-component states for one deployment. */
+type DeploymentReport = {
+  errorMessage: string | null
+  components: ComponentStatus[]
+}
+
+/**
+ * Best-effort per-deployment failure detail keyed by deployment id.
+ * The device-detail API's current-state rows carry only the Margo
+ * `state`, not `status.error` or per-component states — but the status
+ * journal records the full DeploymentStatusManifest, so we read the
+ * newest status record per deployment from the head journal page (a
+ * bounded, forensic source; shares the Journal tab's cached page).
+ */
+function useDeploymentReports(
+  deviceId: string,
+): Map<string, DeploymentReport> {
+  const refetchInterval = usePollInterval(10_000)
+  const page = useJournal(
+    deviceId,
+    { limit: JOURNAL_PAGE_SIZE },
+    { query: { refetchInterval } },
+  )
+  const reports = new Map<string, DeploymentReport>()
+  if (page.data?.status !== 200) return reports
+  for (const record of page.data.data.records) {
+    if (record.kind !== 'status' || record.payload == null) continue
+    const manifest = record.payload as DeploymentStatusManifest
+    if (
+      typeof manifest.deploymentId !== 'string' ||
+      reports.has(manifest.deploymentId)
+    )
+      continue
+    reports.set(manifest.deploymentId, {
+      errorMessage: manifest.status?.error?.message ?? null,
+      components: manifest.components ?? [],
+    })
+  }
+  return reports
+}
+
+/** Per-component state pill; carries its error message as a tooltip. */
+function ComponentBadge({ component }: { component: ComponentStatus }) {
+  const tone =
+    component.state === 'installed'
+      ? 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
+      : component.state === 'failed'
+        ? 'border-red-500/40 text-red-600 dark:text-red-400'
+        : 'text-muted-foreground'
+  return (
+    <Badge
+      variant="outline"
+      title={component.error?.message ?? undefined}
+      className={cn('font-mono text-xs font-normal', tone)}
+    >
+      {component.name}: {component.state}
+    </Badge>
+  )
+}
+
 function OverviewTab({ device }: { device: DeviceDetail }) {
   const tags = Object.entries(device.tags)
   const configApps = device.render?.apps ?? []
+  const reports = useDeploymentReports(device.deviceId)
   return (
     <div className="flex flex-col gap-4">
       <Card>
@@ -115,25 +183,51 @@ function OverviewTab({ device }: { device: DeviceDetail }) {
                   <TableHead>State</TableHead>
                   <TableHead>Observed</TableHead>
                   <TableHead>Received</TableHead>
+                  <TableHead className="text-right">Logs</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {device.deployments.map((d) => (
-                  <TableRow key={d.deploymentId}>
-                    <TableCell>
-                      <Mono>{d.deploymentId}</Mono>
-                    </TableCell>
-                    <TableCell>
-                      <DeploymentStateBadge state={d.state} />
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {fmtRfc3339(d.observedAt)}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {fmtUnix(d.receivedAt)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {device.deployments.map((d) => {
+                  const report = reports.get(d.deploymentId)
+                  const showError =
+                    d.state === 'failed' && !!report?.errorMessage
+                  return (
+                    <TableRow key={d.deploymentId}>
+                      <TableCell className="align-top">
+                        <div className="flex flex-col gap-1.5">
+                          <Mono>{d.deploymentId}</Mono>
+                          {showError && (
+                            <span className="text-xs text-red-600 dark:text-red-400">
+                              {report?.errorMessage}
+                            </span>
+                          )}
+                          {report && report.components.length > 0 && (
+                            <span className="flex flex-wrap gap-1">
+                              {report.components.map((c) => (
+                                <ComponentBadge key={c.name} component={c} />
+                              ))}
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <DeploymentStateBadge state={d.state} />
+                      </TableCell>
+                      <TableCell className="align-top text-sm text-muted-foreground">
+                        {fmtRfc3339(d.observedAt)}
+                      </TableCell>
+                      <TableCell className="align-top text-sm text-muted-foreground">
+                        {fmtUnix(d.receivedAt)}
+                      </TableCell>
+                      <TableCell className="align-top text-right">
+                        <DeployLogsDialog
+                          deviceId={device.deviceId}
+                          deploymentId={d.deploymentId}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           )}

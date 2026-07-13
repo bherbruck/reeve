@@ -51,6 +51,7 @@ fn config(data_dir: &FsPath, zot: Option<ZotConfig>) -> Config {
         federation: None,
         install_open: false,
         admin_seed: None,
+        logs_retain_per_deployment: 10,
     }
 }
 

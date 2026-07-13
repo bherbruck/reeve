@@ -422,6 +422,104 @@
         }
       }
     },
+    "/api/devices/{device_id}/logs": {
+      "get": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "GET /api/devices/{device_id}/logs?deployment=<id> (viewer+).\nLists stored log metas newest-first. `deployment` is required.",
+        "operationId": "list_deploy_logs",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "description": "Device id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "deployment",
+            "in": "query",
+            "description": "Deployment id to list logs for",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Log metas, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployLogList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Below viewer role"
+          }
+        }
+      }
+    },
+    "/api/devices/{device_id}/logs/{log_id}": {
+      "get": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "GET /api/devices/{device_id}/logs/{log_id} (viewer+).",
+        "description": "Returns the full log. Defaults to JSON `{ meta, text }`; a request\nwith `Accept: text/plain` gets the raw body as `text/plain`.",
+        "operationId": "get_deploy_log",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "description": "Device id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "log_id",
+            "in": "path",
+            "description": "Log id from the list route",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The log (JSON meta+text, or text/plain body)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployLogContent"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Below viewer role"
+          },
+          "404": {
+            "description": "No such log for this device"
+          }
+        }
+      }
+    },
     "/api/durability/status": {
       "get": {
         "tags": [
@@ -1003,6 +1101,68 @@
           },
           "401": {
             "description": "Unauthenticated"
+          }
+        }
+      }
+    },
+    "/api/reeve/v1/devices/{device_id}/logs": {
+      "post": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "POST /api/reeve/v1/devices/{device_id}/logs (DEVICE auth).",
+        "description": "The agent uploads its OWN captured compose output; the path\n`device_id` MUST match the authenticated device token, else 403.\nBody is a [`DeployLogUpload`] JSON; bodies over [`MAX_UPLOAD_BYTES`]\nare rejected 413 by the `DefaultBodyLimit` layer on the route.",
+        "operationId": "upload_route",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "description": "The uploading device (must match the token)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeployLogUpload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Stored; returns the new log id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogIdResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not a device credential"
+          },
+          "403": {
+            "description": "device_id does not match the token"
+          },
+          "413": {
+            "description": "Body exceeds the accept cap"
+          },
+          "422": {
+            "description": "Malformed upload body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
           }
         }
       }
@@ -2998,6 +3158,148 @@
           }
         }
       },
+      "DeployLogContent": {
+        "type": "object",
+        "description": "GET-one response: metadata + the full text. (The route MAY also\nserve raw `text/plain`; this is the JSON shape the UI consumes.)",
+        "required": [
+          "meta",
+          "text"
+        ],
+        "properties": {
+          "meta": {
+            "$ref": "#/components/schemas/DeployLogMeta"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "DeployLogList": {
+        "type": "object",
+        "description": "GET-list response: metas newest-first for one (device, deployment).",
+        "required": [
+          "logs"
+        ],
+        "properties": {
+          "logs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeployLogMeta"
+            }
+          }
+        }
+      },
+      "DeployLogMeta": {
+        "type": "object",
+        "description": "Listing/reference metadata for one stored log — everything the UI\nneeds for a list row, minus the (potentially large) text body,\nwhich is fetched on demand by `id`.",
+        "required": [
+          "id",
+          "deploymentId",
+          "appId",
+          "outcome",
+          "phase",
+          "sizeBytes",
+          "truncated",
+          "capturedAt"
+        ],
+        "properties": {
+          "appId": {
+            "type": "string"
+          },
+          "capturedAt": {
+            "type": "string",
+            "description": "The device-captured RFC 3339 timestamp, preserved verbatim."
+          },
+          "deploymentId": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "Opaque server-assigned log id (the handle for the GET-one route)."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/DeployLogOutcome"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/DeployLogPhase"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Byte length of the stored text.",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DeployLogOutcome": {
+        "type": "string",
+        "description": "What the converge attempt this log covers resulted in — mirrors the\nagent's per-deployment outcome, independent of the Margo state.",
+        "enum": [
+          "applied",
+          "failed",
+          "removed"
+        ]
+      },
+      "DeployLogPhase": {
+        "type": "string",
+        "description": "Which compose phase produced this output.",
+        "enum": [
+          "up",
+          "down"
+        ]
+      },
+      "DeployLogUpload": {
+        "type": "object",
+        "description": "The agent's upload body: one captured compose run for one\ndeployment. `text` is the combined stdout+stderr the agent\ncaptured; `truncated` is true when the agent already clipped it to\nits own cap before sending (the server additionally rejects bodies\nover its accept cap).",
+        "required": [
+          "deploymentId",
+          "appId",
+          "outcome",
+          "phase",
+          "truncated",
+          "capturedAt",
+          "text"
+        ],
+        "properties": {
+          "appId": {
+            "type": "string",
+            "description": "The application id (Margo `applicationId`) for display grouping."
+          },
+          "capturedAt": {
+            "type": "string",
+            "description": "When the agent captured this run (RFC 3339, device clock —\npreserved verbatim like the journal's `observedAt`)."
+          },
+          "deploymentId": {
+            "type": "string",
+            "description": "The Margo deployment id this run converged (same value the\ndevice reports in `DeploymentStatusManifest.deploymentId`)."
+          },
+          "exitCode": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Process exit code when known (`None` if the agent never got one\n— e.g. the binary could not be spawned)."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/DeployLogOutcome"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/DeployLogPhase"
+          },
+          "text": {
+            "type": "string",
+            "description": "Combined captured output (stdout+stderr). Plain text."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True if the agent clipped `text` before upload."
+          }
+        }
+      },
       "DeployRequest": {
         "type": "object",
         "description": "`POST /api/deploy` / `POST /api/undeploy` body (§11.4).",
@@ -4337,6 +4639,18 @@
           "lifecycle",
           "gap"
         ]
+      },
+      "LogIdResponse": {
+        "type": "object",
+        "description": "`POST .../logs` response body: the new log id.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        }
       },
       "LoginRequest": {
         "type": "object",
@@ -5845,6 +6159,10 @@
     {
       "name": "events",
       "description": "Live status stream, SSE (spec/reeve/04-status-stream.md)"
+    },
+    {
+      "name": "logs",
+      "description": "Per-deployment compose logs (REV-011 ext-logs)"
     },
     {
       "name": "terminal",

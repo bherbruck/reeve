@@ -101,6 +101,7 @@ use utoipa::OpenApi;
         (name = "rollouts", description = "Staged rollouts (spec/reeve/09-rollouts.md)"),
         (name = "federation", description = "Tier tokens and federation sync status (spec/reeve/06-federation.md)"),
         (name = "events", description = "Live status stream, SSE (spec/reeve/04-status-stream.md)"),
+        (name = "logs", description = "Per-deployment compose logs (REV-011 ext-logs)"),
         (name = "terminal", description = "Remote terminal bridge (spec/reeve/03-terminal.md)"),
         (name = "device", description = "Device-facing wire surface (enroll, manifest poll, status ingest)"),
         (name = "ops", description = "Operational endpoints"),
@@ -141,6 +142,15 @@ struct RolloutsApi;
 ))]
 struct FederationApi;
 
+#[cfg(feature = "ext-logs")]
+#[derive(OpenApi)]
+#[openapi(paths(
+    crate::ext::logs::upload_route,
+    crate::ext::logs::list_route,
+    crate::ext::logs::get_route,
+))]
+struct LogsApi;
+
 #[cfg(feature = "ext-sse")]
 #[derive(OpenApi)]
 #[openapi(paths(crate::ext::sse::events_route))]
@@ -162,6 +172,8 @@ pub fn doc() -> utoipa::openapi::OpenApi {
     doc.merge(RolloutsApi::openapi());
     #[cfg(feature = "ext-federation")]
     doc.merge(FederationApi::openapi());
+    #[cfg(feature = "ext-logs")]
+    doc.merge(LogsApi::openapi());
     #[cfg(feature = "ext-sse")]
     doc.merge(SseApi::openapi());
     #[cfg(feature = "ext-terminal")]
@@ -218,6 +230,10 @@ mod tests {
             "/api/reeve/v1/events",
             #[cfg(feature = "ext-terminal")]
             "/api/reeve/v1/terminal/{device_id}",
+            #[cfg(feature = "ext-logs")]
+            "/api/reeve/v1/devices/{device_id}/logs",
+            #[cfg(feature = "ext-logs")]
+            "/api/devices/{device_id}/logs/{log_id}",
         ] {
             assert!(paths.contains_key(p), "missing path {p}");
         }

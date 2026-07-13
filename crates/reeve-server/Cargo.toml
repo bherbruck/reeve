@@ -20,8 +20,19 @@ default = [
     "ext-sse",
     "ext-rollouts",
     "ext-federation",
+    "ext-logs",
 ]
 ext-durability-changeset = []
+# REV-011 deploy-log storage (server-side): capture per-deployment
+# `docker compose up`/`down` output and store it content-addressed so
+# operators can see WHY a deployment failed beyond the one-line Margo
+# `status.error`. Whole module (src/ext/logs.rs) behind this feature;
+# the LogStore trait is the seam a future LokiLogStore satisfies
+# without touching callers. Core (--no-default-features) never links it
+# and advertises no rev-011; the V12 tables exist regardless (schema is
+# stable across feature sets, like V6/V7 — a core binary can still
+# restore a target written by a full one).
+ext-logs = []
 # REV-009 secrets vault (spec/reeve/10-secrets.md, C7): AEAD-encrypted
 # secrets table under the D15 keyfile, device resolve endpoint,
 # operator write-only API, and the render-time per-app secrets_version

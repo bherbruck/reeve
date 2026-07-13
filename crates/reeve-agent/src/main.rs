@@ -42,6 +42,12 @@ struct ExtHooks {
     /// local-first (§7.1); only the backfill sender needs a server.
     #[cfg(feature = "ext-health")]
     health: Option<reeve_agent::ext::health::HealthRuntime>,
+    /// ext-logs (REV-011): device-token uploader for captured compose
+    /// logs. `None` for `dir://` sources and unenrolled agents — logs
+    /// are then written to the local logs dir only (§3.2). A log-upload
+    /// problem NEVER affects convergence (Law 5).
+    #[cfg(feature = "ext-logs")]
+    logs: Option<reeve_agent::ext::logs::LogUploader>,
 }
 
 /// Wait between cycles: the poll interval tick, or — with the
@@ -133,6 +139,14 @@ async fn converge_and_report(
         info!(acted_on = reports.len(), "converge pass acted");
         record_reports(db, &reports);
     }
+    // ext-logs (REV-011): persist + upload the combined compose output
+    // captured for each acted-on app. Runs AFTER converge (converge is
+    // sync, the upload is async) on the same cadence as record_reports;
+    // offline/error is a journaled continue that never touches a
+    // converge decision (Law 5). With the feature off, nothing here is
+    // compiled and convergence is byte-identical.
+    #[cfg(feature = "ext-logs")]
+    reeve_agent::ext::logs::record_logs(db, data_dir, hooks.logs.as_ref(), &reports).await;
     // ext-terminal (REV-002): re-evaluate enablement from the state
     // just converged — the agent's terminal gate follows its LAST
     // CONVERGED desired state, online or offline, and converging to
@@ -469,6 +483,20 @@ async fn main() -> anyhow::Result<()> {
             provider.clone(),
             sink.as_ref().map(|s| s.health_slot()),
         ));
+    }
+    #[cfg(feature = "ext-logs")]
+    {
+        // REV-011: uploader over the enrollment-issued device token.
+        // `None` for dir:// sources and unenrolled agents — logs are
+        // still captured to the local logs dir (§3.2).
+        hooks.logs = reeve_agent::ext::logs::LogUploader::from_config(
+            &config.server,
+            config.device_token.clone(),
+            config.device_id.clone(),
+        );
+        if hooks.logs.is_none() {
+            info!("no logs endpoint (dir:// source or not enrolled); deploy logs captured locally only (spec/reeve/01-framework.md §3.1)");
+        }
     }
     #[cfg(feature = "ext-channel")]
     {

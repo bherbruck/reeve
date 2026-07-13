@@ -23,7 +23,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use rusqlite::params;
 use serde_json::{Value, json};
 
-use reeve_agent::provider::{AppStatus, Provider, ProviderError};
+use reeve_agent::provider::{AppStatus, CapturedRun, Provider, ProviderError};
 use reeve_agent::{
     AgentDb, BundleSource, BundleStore, Desired, ManifestSource, PollOutcome, StatusSink, converge,
     poll_once, record_reports, resolve_desired,
@@ -67,6 +67,7 @@ pub fn config_disabled(data_dir: &Path) -> Config {
         federation: None,
         install_open: false,
         admin_seed: None,
+        logs_retain_per_deployment: 10,
     }
 }
 
@@ -118,6 +119,17 @@ pub async fn serve_router(cfg: Config) -> (SocketAddr, AppState) {
 pub async fn boot() -> TestServer {
     let data = tempfile::tempdir().unwrap();
     let cfg = config_disabled(data.path());
+    let (addr, state) = serve_router(cfg).await;
+    TestServer { addr, state, data_dir: data, target_dir: None }
+}
+
+/// Boot a durability-disabled server with a custom deploy-log
+/// retention (ext-logs, REV-011) — the server keeps the most-recent
+/// `retain` logs per (device, deployment).
+pub async fn boot_with_log_retain(retain: u64) -> TestServer {
+    let data = tempfile::tempdir().unwrap();
+    let mut cfg = config_disabled(data.path());
+    cfg.logs_retain_per_deployment = retain;
     let (addr, state) = serve_router(cfg).await;
     TestServer { addr, state, data_dir: data, target_dir: None }
 }
@@ -451,6 +463,22 @@ pub struct FakeProvider {
     ups: Mutex<Vec<String>>,
     downs: Mutex<Vec<String>>,
     fail: Mutex<HashSet<String>>,
+    /// Apps whose `up` command itself FAILS (returns `ProviderError`) —
+    /// the `docker compose up` non-zero-exit case (e.g. pull denied).
+    /// Unlike [`fail`](Self::fail) (up ran, container unhealthy), an
+    /// errored app is never marked `applied`, so converge re-applies it
+    /// every pass — and each attempt's capture is `success == false`
+    /// (a `failed` deploy log).
+    err: Mutex<HashSet<String>>,
+    /// Per-app canned combined `compose up`/`down` output the provider
+    /// "captured" (ext-logs, REV-011). Mirrors what the real
+    /// `CommandComposeProvider` records into its interior slot; drained
+    /// by [`Provider::take_capture`] exactly once per apply/remove so
+    /// converge can harvest it onto the [`AppReport`].
+    output: Mutex<HashMap<String, String>>,
+    /// The most-recent capture, set on every apply/remove, drained by
+    /// `take_capture` (latest-run-wins, like the compose provider).
+    capture: Mutex<Option<CapturedRun>>,
 }
 
 impl FakeProvider {
@@ -460,6 +488,45 @@ impl FakeProvider {
     /// Mark an app so its next apply reports `error` (a failed gate).
     pub fn fail_app(&self, name: &str) {
         self.fail.lock().unwrap().insert(name.to_string());
+    }
+    /// Mark an app so its `up` command FAILS (`apply` returns
+    /// `ProviderError`) — the compose-up-failed case (pull denied, bad
+    /// image). The one-line reason rides in the returned `ProviderError`
+    /// (-> Margo `status.error`), the full captured output in the log.
+    pub fn error_app(&self, name: &str) {
+        self.err.lock().unwrap().insert(name.to_string());
+    }
+    /// Clear prior [`fail_app`](Self::fail_app)/[`error_app`](Self::error_app)
+    /// marks so the app's next apply converges (a recovered deploy).
+    pub fn heal_app(&self, name: &str) {
+        self.fail.lock().unwrap().remove(name);
+        self.err.lock().unwrap().remove(name);
+    }
+    /// Set the combined output this provider "captures" for an app's
+    /// next apply/remove — the failure text an operator later reads
+    /// back through the ext-logs GET routes. Absent = a generated
+    /// default line.
+    pub fn set_output(&self, name: &str, text: &str) {
+        self.output.lock().unwrap().insert(name.to_string(), text.to_string());
+    }
+    /// Build + stash the capture for one lifecycle run, mirroring
+    /// `CommandComposeProvider::run_lifecycle`.
+    fn record_capture(&self, name: &str, phase_up: bool, success: bool) {
+        let combined = self.output.lock().unwrap().get(name).cloned().unwrap_or_else(|| {
+            let verb = if phase_up { "up" } else { "down" };
+            if success {
+                format!("compose {verb} {name}\nContainer {name} Started\n")
+            } else {
+                format!("compose {verb} {name}\nError: compose {verb} failed for {name}\n")
+            }
+        });
+        *self.capture.lock().unwrap() = Some(CapturedRun {
+            phase_up,
+            combined,
+            exit_code: Some(if success { 0 } else { 1 }),
+            truncated: false,
+            success,
+        });
     }
     /// Apps that were `up -d`'d, in order (duplicates = re-ups).
     pub fn ups(&self) -> Vec<String> {
@@ -482,6 +549,15 @@ impl Provider for FakeProvider {
     fn apply(&self, app_dir: &Path) -> Result<AppStatus, ProviderError> {
         let name = Self::dir_name(app_dir);
         self.ups.lock().unwrap().push(name.clone());
+        // `up` command failed outright (Err) — captured as success=false,
+        // and converge never marks it applied, so it re-applies next pass.
+        if self.err.lock().unwrap().contains(&name) {
+            self.record_capture(&name, true, false);
+            return Err(ProviderError(format!("`docker compose up` failed for {name}")));
+        }
+        // `up` ran (capture success=true); state may still be Failed when
+        // the app is marked unhealthy via `fail`.
+        self.record_capture(&name, true, true);
         let state = if self.fail.lock().unwrap().contains(&name) {
             DeploymentState::Failed
         } else {
@@ -490,7 +566,9 @@ impl Provider for FakeProvider {
         Ok(AppStatus { state, detail: None })
     }
     fn remove(&self, retained_dir: &Path) -> Result<(), ProviderError> {
-        self.downs.lock().unwrap().push(Self::dir_name(retained_dir));
+        let name = Self::dir_name(retained_dir);
+        self.downs.lock().unwrap().push(name.clone());
+        self.record_capture(&name, false, true);
         Ok(())
     }
     fn status(&self, app_dir: &Path) -> Result<AppStatus, ProviderError> {
@@ -501,6 +579,9 @@ impl Provider for FakeProvider {
             DeploymentState::Installed
         };
         Ok(AppStatus { state, detail: None })
+    }
+    fn take_capture(&self) -> Option<CapturedRun> {
+        self.capture.lock().unwrap().take()
     }
 }
 
@@ -517,6 +598,14 @@ pub struct TestAgent {
     pub bundle_source: BundleSource,
     pub sink: Option<StatusSink>,
     pub device_id: String,
+    /// ext-logs (REV-011): the device-token uploader for captured
+    /// compose output, exactly as `reeve-agent/src/main.rs` builds it.
+    /// `tick` runs `record_logs` over each pass's reports through this,
+    /// mirroring the binary's post-converge hook. Gated on the e2e
+    /// `ext` feature so the core-only conformance build (ext-logs
+    /// compiled out) still compiles this harness.
+    #[cfg(feature = "ext")]
+    pub logs: Option<reeve_agent::ext::logs::LogUploader>,
 }
 
 /// What one [`TestAgent::tick`] observed — enough to assert epoch bumps,
@@ -537,6 +626,12 @@ impl TestAgent {
         let bundle_source = BundleSource::parse(server_base, Some(token.to_string())).unwrap();
         let sink =
             StatusSink::from_config(server_base, Some(token.to_string()), Some(device_id.to_string()));
+        #[cfg(feature = "ext")]
+        let logs = reeve_agent::ext::logs::LogUploader::from_config(
+            server_base,
+            Some(token.to_string()),
+            Some(device_id.to_string()),
+        );
         TestAgent {
             data_dir,
             db,
@@ -545,6 +640,8 @@ impl TestAgent {
             bundle_source,
             sink,
             device_id: device_id.to_string(),
+            #[cfg(feature = "ext")]
+            logs,
         }
     }
 
@@ -581,6 +678,19 @@ impl TestAgent {
         let reports = converge(&mut self.db, self.data_dir.path(), provider, &desired);
         let acted: Vec<String> = reports.iter().map(|r| r.app_id.clone()).collect();
         record_reports(&self.db, &reports);
+        // ext-logs (REV-011): persist + best-effort upload the captured
+        // compose output for each acted-on app, on the same cadence and
+        // in the same place `reeve-agent/src/main.rs` runs it (right
+        // after record_reports). Feature-gated so the conformance build
+        // (ext-logs out) never references it.
+        #[cfg(feature = "ext")]
+        reeve_agent::ext::logs::record_logs(
+            &self.db,
+            self.data_dir.path(),
+            self.logs.as_ref(),
+            &reports,
+        )
+        .await;
         if let Some(sink) = &self.sink {
             sink.send_unsent(&self.db).await;
         }

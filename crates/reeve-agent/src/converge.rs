@@ -164,6 +164,14 @@ pub struct AppReport {
     /// (Margo: "MUST contain one entry for each component").
     pub components: Vec<String>,
     pub error: Option<String>,
+    /// COMBINED `docker compose up`/`down` output captured for this
+    /// attempt, harvested from [`Provider::take_capture`] — the
+    /// ext-logs seam (REV-011). Always populated by the compose
+    /// provider, `None` for the agent-update path and for providers
+    /// that capture nothing. Core carries it as plain data; only the
+    /// ext-logs hook (main.rs, behind `ext-logs`) reads it, so the
+    /// `--no-default-features` build simply never looks at the field.
+    pub captured: Option<crate::provider::CapturedRun>,
 }
 
 /// Status-contract fields read from an app dir's deployment.yaml.
@@ -448,6 +456,7 @@ fn apply_app(
         state: DeploymentState::Pending,
         components: meta.components,
         error: None,
+        captured: None,
     };
     let fail = |report: &mut AppReport, msg: String| {
         report.state = DeploymentState::Failed;
@@ -527,7 +536,12 @@ fn apply_app(
         fail(&mut report, format!("cannot record applying phase: {e}"));
         return report;
     }
-    match provider.apply(&staged) {
+    let apply_result = provider.apply(&staged);
+    // Harvest the combined up-output for ext-logs BEFORE branching, so
+    // both success and failure carry it (REV-011). No-op for providers
+    // that capture nothing.
+    report.captured = provider.take_capture();
+    match apply_result {
         Ok(status) => {
             if let Err(e) = retain_applied(data_dir, &app.name, &staged) {
                 // Leave the phase at `applying`: the retained copy is
@@ -591,6 +605,7 @@ fn remove_app(
         state: DeploymentState::Removing,
         components: meta.components,
         error: None,
+        captured: None,
     };
 
     // Intent BEFORE action (D5). Keep the row's hash: it still names
@@ -613,6 +628,10 @@ fn remove_app(
             Ok(())
         }
     };
+    // Harvest the combined down-output for ext-logs (REV-011); `None`
+    // when nothing was `down`ed (no copy) or the provider captures
+    // nothing.
+    report.captured = provider.take_capture();
     match down {
         Ok(()) => {
             // Down succeeded => applied copy removed (D5), staged dir

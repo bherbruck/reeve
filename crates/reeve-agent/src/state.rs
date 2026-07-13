@@ -333,6 +333,20 @@ impl AgentDb {
         Ok(())
     }
 
+    /// Current UTC time as an RFC 3339 / ISO-8601 string in the exact
+    /// format the journal uses (SQLite `strftime`, millisecond `Z`).
+    /// Used to stamp device-captured timestamps (e.g. ext-logs
+    /// `capturedAt`, REV-011) with the same clock the rest of the DB
+    /// records — no extra time crate needed.
+    pub fn now_rfc3339(&self) -> Result<String, StateError> {
+        let ts: String = self.conn.query_row(
+            "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(ts)
+    }
+
     /// All journal entries in sequence order.
     pub fn journal_entries(&self) -> Result<Vec<JournalEntry>, StateError> {
         let mut stmt = self

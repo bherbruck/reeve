@@ -235,6 +235,7 @@ mod tests {
             state: DeploymentState::Installed,
             components: vec!["web-stack".into(), "db-services".into()],
             error: None,
+            captured: None,
         }
     }
 

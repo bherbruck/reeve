@@ -31,10 +31,12 @@ ext = [
     "reeve-server/ext-sse",
     "reeve-server/ext-rollouts",
     "reeve-server/ext-federation",
+    "reeve-server/ext-logs",
     "reeve-agent/ext-secrets",
     "reeve-agent/ext-channel",
     "reeve-agent/ext-terminal",
     "reeve-agent/ext-health",
+    "reeve-agent/ext-logs",
 ]
 
 [dependencies]

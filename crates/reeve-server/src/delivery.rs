@@ -71,6 +71,12 @@ pub fn server_capabilities() -> ServerCapabilities {
     if cfg!(feature = "ext-secrets") {
         extensions.push(format_extension(rev::SECRETS, 1));
     }
+    // rev-011/1 Deploy logs (server ext-logs): advertised so a reeve
+    // agent knows to upload captured compose output; a vanilla WFM and
+    // a core --no-default-features build advertise nothing (§3.3).
+    if cfg!(feature = "ext-logs") {
+        extensions.push(format_extension(rev::DEPLOY_LOGS, 1));
+    }
     ServerCapabilities {
         server_version: env!("CARGO_PKG_VERSION").to_string(),
         extensions,

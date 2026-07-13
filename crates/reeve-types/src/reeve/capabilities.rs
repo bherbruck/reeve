@@ -112,6 +112,10 @@ pub mod rev {
     pub const FEDERATION: u16 = 5;
     /// REV-009 Secrets (spec/reeve/10-secrets.md).
     pub const SECRETS: u16 = 9;
+    /// REV-011 Deploy logs (server `ext-logs`): full compose
+    /// up/down output stored per deployment so operators can see WHY a
+    /// deployment failed beyond the one-line Margo `status.error`.
+    pub const DEPLOY_LOGS: u16 = 11;
 }
 
 #[cfg(test)]

@@ -35,6 +35,7 @@ fn config(data_dir: &FsPath, install_open: bool) -> Config {
         federation: None,
         install_open,
         admin_seed: None,
+        logs_retain_per_deployment: 10,
     }
 }
 

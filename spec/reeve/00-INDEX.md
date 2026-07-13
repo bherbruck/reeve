@@ -4,7 +4,7 @@
 Status:       Stable
 Scope:        All reeve extensions to the pinned Margo specification
 Margo pin:    spec/margo/ (submodule commit is authoritative)
-Extensions:   REV-001 .. REV-010 (index in 01-framework Section 3.5)
+Extensions:   REV-001 .. REV-011 (index in 01-framework Section 3.5)
 ```
 
 ## Abstract
@@ -22,7 +22,8 @@ also REPLACES three Margo device-facing surfaces outright
 enumerates them — replacement is declared there, never implied
 elsewhere. Sections 4–12 define the extensions themselves,
 identified REV-001 through REV-009; REV-010 (Section 11) adds the
-operator-facing fleet model over the same storage engine.
+operator-facing fleet model over the same storage engine, and REV-011
+(05-health-journal §7.7) adds per-deployment compose-log capture.
 
 ## 1. Introduction
 
@@ -104,7 +105,7 @@ protocol versions, dependencies) is its §3.5.
 | [02-channel.md](02-channel.md) | persistent agent channel | §4 (REV-001) |
 | [03-terminal.md](03-terminal.md) | remote terminal | §5 (REV-002) |
 | [04-status-stream.md](04-status-stream.md) | SSE live status stream | §6 (REV-003) |
-| [05-health-journal.md](05-health-journal.md) | device health & status journal | §7 (REV-004) |
+| [05-health-journal.md](05-health-journal.md) | device health & status journal; deploy-log capture | §7 (REV-004), §7.7 (REV-011) |
 | [06-federation.md](06-federation.md) | federation & gateway, per-tier revision model | §8 (REV-005) |
 | [07-durability.md](07-durability.md) | durability, epoch fencing, verify-restore | §9 (REV-006) |
 | [08-packaging.md](08-packaging.md) | packaging & self-hosting, delivery endpoints | §10 (REV-007) |

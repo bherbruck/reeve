@@ -163,6 +163,19 @@ pub fn build(state: AppState) -> Router {
             "/api/federation/status",
             get(crate::ext::federation::status_route),
         );
+    // Deploy-log viewer (REV-011, ext-logs): list metas + read one
+    // stored compose log, viewer+ (enforced in the handlers). Additive
+    // reeve routes under /api/devices/... — never a Margo path.
+    #[cfg(feature = "ext-logs")]
+    let human = human
+        .route(
+            "/api/devices/{device_id}/logs",
+            get(crate::ext::logs::list_route),
+        )
+        .route(
+            "/api/devices/{device_id}/logs/{log_id}",
+            get(crate::ext::logs::get_route),
+        );
     // Live status stream (C8, spec/reeve/04-status-stream.md §6.1):
     // SSE, viewer+ (enforced in the handler), never unauthenticated —
     // inside the human_auth layer like every other human read.
@@ -241,6 +254,16 @@ pub fn build(state: AppState) -> Router {
     let device = device.route(
         reeve_types::reeve::secrets::SECRETS_RESOLVE_PATH,
         post(crate::ext::secrets::resolve_route),
+    );
+    // Deploy-log upload (REV-011, ext-logs): the agent uploads its OWN
+    // captured compose output (device auth; the handler checks the path
+    // device_id matches the token). The per-route body cap rejects
+    // oversized uploads with 413 before buffering the whole body.
+    #[cfg(feature = "ext-logs")]
+    let device = device.route(
+        "/api/reeve/v1/devices/{device_id}/logs",
+        post(crate::ext::logs::upload_route)
+            .layer(axum::extract::DefaultBodyLimit::max(crate::ext::logs::MAX_UPLOAD_BYTES)),
     );
     let device = device.layer(middleware::from_fn_with_state(
         token_store,
